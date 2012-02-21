@@ -66,7 +66,9 @@ setup(
     keywords = ['django', 'multidb', 'router'],
     license = 'MIT',
     tests_require=['django>=1.2.0'],    
-    # FIXME: make tests bloody run.
+    cmdclass={
+        "test": RunTests,
+    },
     include_package_data=True,
     platforms=["any"],
     classifiers=[

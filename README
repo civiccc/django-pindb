@@ -55,11 +55,9 @@ Solution:
                    # ORM usage will now hit a replica
                # or
                queryset.using(pindb.get_slave('master-alias'))
-               # or
-               model_instance.save(using='master-alias')
 
                # Initialize/end the container:
-               replicatset.unpin_all()
+               pindb.unpin_all()
 
        In more detail:
 
@@ -98,6 +96,8 @@ TEST_MIRROR='master-alias' },
        If no master is named "default", then the master of your first db set will also 
 be aliased to "default".  You should use django.utils.datastructures.SortedDict to make that stable.
 
+      In order to compose pinning with selection of the appropriate master, there is a one additional setting: DATABASE_ROUTER_DELEGATE.  It has the same interface as a normal DATABASE_ROUTER, but db_for_read and db_for_write must only return master aliases.  Then an appropriate master or slave will be chosen for that db set.
+
        The DB router will throw an error if db_for_write is called without
 declaring that it's OK.  The correct approach is to pin the DB you
 intend to do writes to *before you read* from a replica.
@@ -122,4 +122,6 @@ you can use queryset's .using method, which bypasses db_for_write.  Careful with
 
 For the common case of web requests and tasks, middleware and task
 signals, respectively, will handle the call to
-replicatset.unpin_all()
+pindb.unpin_all()
+
+TODO: Use signed cookies if available (dj 1.4+) for web pinning context.

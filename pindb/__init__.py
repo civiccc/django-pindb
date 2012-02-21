@@ -1,15 +1,94 @@
 __version__  =  (0, 1, 0) # remember to change setup.py
 
+from threading import local
+from itertools import cycle
+from random import randint
+from warnings import warn
+from django.conf import settings
+from django.utils import importlib
 from django.utils.datastructures import SortedDict
+
+_locals = local()
+
+class PinDBException(Exception):
+    pass
+
+class PinDBConfigError(PinDBException, ValueError):
+    pass
+
+
+class UnpinnedWriteException(PinDBException):
+    pass
+
+
+def unpin_all():
+    # the authoritative set of pinned alias.
+    _locals.pinned_set = set()
+    # the newly-pinned ones for advising the pinned context (i.e. for persistence.)
+    _locals.newly_pinned = set()
+# initialize state
+unpin_all()
+
+def pin(alias, count_as_new=True):
+    _locals.pinned_set.add(alias)
+    if count_as_new:
+        _locals.newly_pinned.add(alias)
+
+def _unpin_one(alias):
+    """
+    Not intended for external use; just here for the unpinned_slave decorator below.
+    """
+    _locals.pinned_set.remove(alias)    
+
+def get_pinned():
+    return _locals.pinned_set.copy()
+
+def get_newly_pinned():
+    return _locals.newly_pinned.copy()
+
+def is_pinned(alias):
+    return alias in _locals.pinned_set
+
+REPLICA_TEMPLATE = "%s-%s"
+def _make_replica_alias(master_alias, replica_num):
+    return REPLICA_TEMPLATE % (master_alias, replica_num)
+
+NUM_REPLICAS = {} # number of replicas for each db set, loaded when the Router is constructed.
+def get_slave(master_alias):
+    if NUM_REPLICAS[master_alias] == -1:
+        return master_alias
+    else:
+        replica_num = randint(0, NUM_REPLICAS[master_alias])
+        return _make_replica_alias(master_alias, replica_num)
+
+class unpinned_slave(object):
+    def __init__(self, alias):
+        self.alias = alias
+
+    def __enter__(self):
+        self.was_pinned = is_pinned(self.alias)
+        if self.was_pinned:
+            _unpin_one(self.alias)
+
+    def __exit__(self, type, value, tb):
+        if self.was_pinned:
+            pin(self.alias)
+
+        if any((type, value, tb)):
+            raise type, value, tb
+
+
+# FIXME: add logging to aid debugging client code.
 def populate_replicas(masters, slave_overrides):
-    replica_template = "%s-%s"
     ret = {}
     for alias, master_values in masters.items():
         ret[alias] = master_values
         for i, slave_overrides in enumerate(slave_overrides[alias]):
-            replica_alias = replica_template % (alias, i)
+            replica_alias = _make_replica_alias(alias, i)
             replica_settings = master_values.copy()
             replica_settings.update(slave_overrides)
+            if not 'TEST_MIRROR' in replica_settings:
+                replica_settings['TEST_MIRROR'] = alias
             ret[replica_alias] = replica_settings
 
     if not "default" in ret:
@@ -17,3 +96,58 @@ def populate_replicas(masters, slave_overrides):
             raise ValueError("Either name a master default or make MASTER_DATABASES stable with SortedDict.")
         ret["default"] = masters[masters.keys()[0]]
     return ret
+
+class DummyRouter(object):
+    def db_for_read(self, model, **hints):
+        return "default"
+
+    def db_for_write(self, model, **hints):
+        return "default"
+
+    def allow_relation(self, obj1, obj2, **hints):
+        return True
+
+    def allow_syncdb(slef, db, model):
+        return True
+
+class PinDBRouter(object):
+    def __init__(self):
+        if (not hasattr(settings, 'MASTER_DATABASES') or
+            not hasattr(settings, 'DATABASE_SETS')):
+            raise PinDBConfigError("You must define MASTER_DATABASES and DATABASE_SETS settings.")
+
+        # stash the # to chose from to reduce per-call overhead in the routing.
+        for alias, master_values in settings.MASTER_DATABASES.items():
+            NUM_REPLICAS[alias] = len(settings.DATABASE_SETS[alias]) - 1
+            if NUM_REPLICAS[alias] == -1:
+                warn("No replicas found for %s; using just the master" % alias)
+
+        # defer master selection to a domain-specific router.
+        delegate = getattr(settings, DATABASE_ROUTER_DELEGATE, None)
+        if delegate:
+            module_path, class_name = delegate.rsplit('.', 1)
+            mod = importlib.import_module(module_path)
+            self.delegate = getattr(mod, class_name)()
+        else:
+            warn("Unable to load delegate router from settings.DATABASE_ROUTER_DELEGATE; using default and its replicas")
+            # or just always use default's set.
+            self.delegate = DummyRouter()
+    
+    def db_for_read(self, model, **hints):
+        master_alias = self.delegate.db_for_read(model, **hints)
+        if is_pinned(master_alias):
+            return master_alias
+        return get_slave(master_alias)
+
+    def db_for_write(self, model, **hints):
+        master_alias = self.delegate.db_for_write(model, **hints)
+        if not is_pinned(master_alias):
+            raise UnpinnedWriteException("Writes to %s aren't allowed because reads aren't pinned to it." % master_alias)
+        return master_alias
+
+    def allow_relation(self, obj1, obj2, **hints):
+        return self.delegate.allow_relation(obj1, obj2, **hints)
+
+    def allow_syncdb(slef, db, model):
+        return self.delegate.allow_syncdb(db, model)
+    
