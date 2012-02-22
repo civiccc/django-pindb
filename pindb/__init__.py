@@ -1,4 +1,4 @@
-__version__  =  (0, 1, 0) # remember to change setup.py
+__version__  =  (0, 1, 1) # remember to change setup.py
 
 from threading import local
 from itertools import cycle
@@ -21,15 +21,19 @@ _locals = local()
 
 # number of replicas for each db set, loaded when the Router is constructed;
 # zero-based to ease using random.randint
-_locals.DB_SET_SIZES = {} 
 
 def unpin_all():
     # the authoritative set of pinned alias.
     _locals.pinned_set = set()
     # the newly-pinned ones for advising the pinned context (i.e. for persistence.)
     _locals.newly_pinned = set()
+
+def _init_state():
+    unpin_all()
+    _locals.DB_SET_SIZES = {}
+
 # initialize state
-unpin_all()
+_init_state()
 
 def pin(alias, count_as_new=True):
     _locals.pinned_set.add(alias)
@@ -129,13 +133,12 @@ class PinDBRouter(object):
                 warn("No replicas found for %s; using just the master" % alias)
 
         # defer master selection to a domain-specific router.
-        delegate = getattr(settings, 'DATABASE_ROUTER_DELEGATE', None)
-        if delegate:
-            module_path, class_name = delegate.rsplit('.', 1)
-            mod = importlib.import_module(module_path)
-            self.delegate = getattr(mod, class_name)()
+        delegates = getattr(settings, 'PINDB_DELEGATE_ROUTERS', [])
+        if delegates:
+            from django.db.utils import ConnectionRouter
+            self.delegate = ConnectionRouter(delegates)
         else:
-            warn("Unable to load delegate router from settings.DATABASE_ROUTER_DELEGATE; using default and its replicas")
+            warn("Unable to load delegate router from settings.PINDB_DELEGATE_ROUTERS; using default and its replicas")
             # or just always use default's set.
             self.delegate = DummyRouter()
     
@@ -159,7 +162,7 @@ class PinDBRouter(object):
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias
 
-        if not is_pinned(master_alias):
+        if not is_pinned(master_alias) and not 'pindb_sidestep' in hints:
             raise UnpinnedWriteException("Writes to %s aren't allowed because reads aren't pinned to it." % master_alias)
         return master_alias
 

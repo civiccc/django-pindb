@@ -82,9 +82,7 @@ class PinDBTestCase(TestCase):
 
     def setUp(self):
         # clear all module state
-        pindb.unpin_all()
-        pindb._locals.DB_SET_SIZES = {}
-
+        pindb._init_state()
 
         # patch up the db system to use the effective router settings (see override_settings)
         # we can't just reconstruct objects here because 
@@ -168,7 +166,7 @@ class MisconfiguredTest(PinDBTestCase):
                 'ham': [],
                 'egg': [{}, {}] # normally would have overrides, but lots of sqlites in memory are happy together.
             },
-            'DATABASE_ROUTER_DELEGATE': 'test_project.router.HamAndEggRouter'
+            'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
         }
 
         self.assertRaises(PinDBConfigError,
@@ -203,7 +201,7 @@ no_delegate_router_settings = {
         'default': [{}, {}], # normally would have overrides, but lots of sqlites in memory are happy together.
         'egg': [] #no replicas
     },
-    'DATABASE_ROUTER_DELEGATE': None
+    'PINDB_DELEGATE_ROUTERS': None
 }
 populate_databases(no_delegate_router_settings)
 
@@ -310,7 +308,7 @@ delegate_router_settings = {
         'default': [], # normally would have overrides, but lots of sqlites in memory are happy together.
         'egg': [{}, {}]
     },
-    'DATABASE_ROUTER_DELEGATE': 'test_project.router.HamAndEggRouter'
+    'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
 }
 populate_databases(delegate_router_settings)
 
@@ -401,6 +399,12 @@ class FullyConfiguredTest(PinDBTestCase):
             dj_db.router.db_for_write,
             EggModel
         )
+        # it should be possible to explicitly sidestep this barrier for e.g. logging
+        try:
+            dj_db.router.db_for_write(EggModel, pindb_sidestep=True)
+        except UnpinnedWriteException:
+            self.fail("Expected to be able to explicitly sidestep write barrier.")
+
         pindb.pin("egg")
         try:
             egg = EggModel.objects.create()
