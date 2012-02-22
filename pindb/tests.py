@@ -240,6 +240,9 @@ class NoDelegateTest(PinDBTestCase):
         self.assertEqual(pindb.get_slave("default"), "default-0")
         mock_randint.return_value = 1
         self.assertEqual(pindb.get_slave("default"), "default-1")
+
+        # gets the master if there are no replicas
+        self.assertEqual(pindb.get_slave("egg"), "egg")
         self.assertRaises(KeyError, pindb.get_slave, "frob")
 
     def test_router(self):
