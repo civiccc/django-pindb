@@ -1,3 +1,5 @@
+from mock import patch
+
 from django.http import HttpRequest, HttpResponse
 from django import db as dj_db
 from django.db.backends.dummy.base import DatabaseWrapper as DummyDatabaseWrapper 
@@ -16,12 +18,6 @@ from test_project.test_app.models import HamModel, EggModel
 import pindb
 from pindb.exceptions import PinDBConfigError, UnpinnedWriteException
 
-# from multidb import (DEFAULT_DB_ALIAS, MasterSlaveRouter,
-#     PinningMasterSlaveRouter, get_slave)
-# from multidb.middleware import (PINNING_COOKIE, PINNING_SECONDS,
-#     PinningRouterMiddleware)
-# from multidb.pinning import (this_thread_is_pinned,
-#     pin_this_thread, unpin_this_thread, use_master, db_write)
 
 """
 Test writing without pinning
@@ -83,6 +79,11 @@ class PinDBTestCase(TestCase):
             call_command('flush', verbosity=0, interactive=False, database=db)
 
     def setUp(self):
+        # clear all module state
+        pindb.unpin_all()
+        pindb._locals.DB_SET_SIZES = {}
+
+
         # patch up the db system to use the effective router settings (see override_settings)
         # we can't just reconstruct objects here because 
         #   lots of places do from foo import baz, so they have
@@ -195,7 +196,52 @@ no_delegate_router_settings = {
 populate_databases(no_delegate_router_settings)
 
 @override_settings(**no_delegate_router_settings)
-class NoDelegateRouterTest(PinDBTestCase):
+class NoDelegateTest(PinDBTestCase):
+    def test_internals(self):
+        self.assertEqual(pindb._locals.DB_SET_SIZES['default'], 1)
+        self.assertEqual(pindb._locals.DB_SET_SIZES['egg'], -1)
+
+    def test_pinning(self):
+        # pinning is reflected in is_pinned
+        for master in settings.MASTER_DATABASES:
+            self.assertFalse(pindb.is_pinned(master))
+            pindb.pin(master)
+            self.assertTrue(pindb.is_pinned(master))
+        # unpin_all resets the state.
+        pindb.unpin_all()
+        for master in settings.MASTER_DATABASES:
+            self.assertFalse(pindb.is_pinned(master))
+
+        pindb.pin("default")
+        # pinning state is available as a set.
+        pinned1 = pindb.get_pinned()
+        self.assertTrue('default' in pinned1)
+        # unpinning doesn't affect the previous set.
+        pindb.unpin_all()
+        pinned2 = pindb.get_pinned()
+        self.assertTrue('default' in pinned1)
+        self.assertFalse('default' in pinned2)
+
+        # we can keep track of new pins vs. carried-over pins
+        #  i.e. pins that stick for the replication lag period.
+        self.assertEqual(0, len(pindb.get_newly_pinned()))
+        pindb.pin("default")
+        self.assertEqual(1, len(pindb.get_newly_pinned()))
+        pindb.unpin_all()
+        self.assertEqual(0, len(pindb.get_newly_pinned()))
+        pindb.pin("default", count_as_new=False)
+        self.assertEqual(0, len(pindb.get_newly_pinned()))
+        # it counts as pinned even if we don't count it as new.
+        self.assertEqual(1, len(pindb.get_pinned()))
+
+    @patch("pindb.randint")
+    def test_get_slave(self, mock_randint):
+        mock_randint.return_value = 0
+        self.assertEqual(pindb.get_slave("default"), "default-0")
+        mock_randint.return_value = 1
+        self.assertEqual(pindb.get_slave("default"), "default-1")
+        self.assertRaises(KeyError, pindb.get_slave, "frob")
+
     def test_router(self):
         self.assertTrue(
             dj_db.router.db_for_read(HamModel) in ["default-0", "default-1"]
@@ -221,9 +267,12 @@ class NoDelegateRouterTest(PinDBTestCase):
 
         ham1 = HamModel.objects.create()
         ham2 = HamModel.objects.create()
+        # If no delegate router is given, all DB goes to default.
+        egg = EggModel.objects.create() 
         self.assertTrue(dj_db.router.allow_relation(ham1, ham2))
         self.assertTrue(dj_db.router.allow_syncdb("default", HamModel))
         self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
+
 
 
 delegate_router_settings = {

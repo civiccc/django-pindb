@@ -19,6 +19,10 @@ __all__ = (
 
 _locals = local()
 
+# number of replicas for each db set, loaded when the Router is constructed;
+# zero-based to ease using random.randint
+_locals.DB_SET_SIZES = {} 
+
 def unpin_all():
     # the authoritative set of pinned alias.
     _locals.pinned_set = set()
@@ -51,16 +55,15 @@ REPLICA_TEMPLATE = "%s-%s"
 def _make_replica_alias(master_alias, replica_num):
     return REPLICA_TEMPLATE % (master_alias, replica_num)
 
-NUM_REPLICAS = {} # number of replicas for each db set, loaded when the Router is constructed.
 
 # TODO: add an option for reading from the slave once one is selected in a given pinning context;
 #  This would allow for replicas in a given db set having different amounts of lag.
 #  Otherwise we could still get inconsistent reads when round-robining among replicas.
 def get_slave(master_alias):
-    if NUM_REPLICAS[master_alias] == -1:
+    if _locals.DB_SET_SIZES[master_alias] == -1:
         return master_alias
     else:
-        replica_num = randint(0, NUM_REPLICAS[master_alias])
+        replica_num = randint(0, _locals.DB_SET_SIZES[master_alias])
         return _make_replica_alias(master_alias, replica_num)
 
 class unpinned_slave(object):
@@ -121,8 +124,8 @@ class PinDBRouter(object):
 
         # stash the # to chose from to reduce per-call overhead in the routing.
         for alias, master_values in settings.MASTER_DATABASES.items():
-            NUM_REPLICAS[alias] = len(settings.DATABASE_SETS[alias]) - 1
-            if NUM_REPLICAS[alias] == -1:
+            _locals.DB_SET_SIZES[alias] = len(settings.DATABASE_SETS[alias]) - 1
+            if _locals.DB_SET_SIZES[alias] == -1:
                 warn("No replicas found for %s; using just the master" % alias)
 
         # defer master selection to a domain-specific router.
