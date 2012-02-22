@@ -141,6 +141,9 @@ class PinDBRouter(object):
     
     def db_for_read(self, model, **hints):
         master_alias = self.delegate.db_for_read(model, **hints)
+        if master_alias is None:
+            master_alias = "default"
+
         # allow anything unmanaged by the db set system to work unhindered.
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias
@@ -150,6 +153,8 @@ class PinDBRouter(object):
 
     def db_for_write(self, model, **hints):
         master_alias = self.delegate.db_for_write(model, **hints)
+        if master_alias is None:
+            master_alias = "default"
         # allow anything unmanaged by the db set system to work unhindered.
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias

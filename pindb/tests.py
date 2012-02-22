@@ -1,3 +1,4 @@
+import tempfile, os
 from mock import patch
 
 from django.http import HttpRequest, HttpResponse
@@ -13,7 +14,7 @@ from django.utils import importlib
 # a backport from django 1.4
 from override_settings import override_settings
 
-from test_project.test_app.models import HamModel, EggModel
+from test_project.test_app.models import HamModel, EggModel, FrobModel
 
 import pindb
 from pindb.exceptions import PinDBConfigError, UnpinnedWriteException
@@ -40,6 +41,7 @@ Test task context:
     test write without pinning
     test writing after pinning
 """
+
 
 # TODO: add coverage, COVERAGE_MODULE_EXCLUDES
 class PinDBTestCase(TestCase):
@@ -121,9 +123,19 @@ class PinDBTestCase(TestCase):
         self.shim_runner.teardown_databases(self.old_config)
 
 def populate_databases(settings_dict):
-    settings_dict['DATABASES'] = pindb.populate_replicas(
-        settings_dict['MASTER_DATABASES'], 
-        settings_dict['DATABASE_SETS'])
+    # work around a bug in django - it doesn't properly create multiple
+    #  in-memory sqlite dbs  So we'll go disk-based.
+    db_dir = tempfile.mkdtemp()
+    if 'DATABASES' not in settings_dict:
+        settings_dict['DATABASES'] = {}
+    settings_dict['DATABASES'].update(
+        pindb.populate_replicas(
+            settings_dict['MASTER_DATABASES'], 
+            settings_dict['DATABASE_SETS']
+        )
+    )
+    for alias, db in settings_dict['DATABASES'].items():
+        db['NAME'] = os.path.join(db_dir, "test_%s" % alias)
 
 misconfigured_settings = {
     'DATABASE_ROUTERS': ['pindb.PinDBRouter'],
@@ -276,10 +288,14 @@ class NoDelegateTest(PinDBTestCase):
         self.assertTrue(dj_db.router.allow_syncdb("default", HamModel))
         self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
 
-
-
 delegate_router_settings = {
     'DATABASE_ROUTERS': ['pindb.PinDBRouter'],
+    'DATABASES': {
+        'frob': {
+            'NAME': ':memory:',
+            'ENGINE': 'django.db.backends.sqlite3',
+        }
+    },
     'MASTER_DATABASES': {
         'default': {
             'NAME': ':memory:',
@@ -291,8 +307,8 @@ delegate_router_settings = {
         }
     },
     'DATABASE_SETS': {
-        'default': [{},{}], # normally would have overrides, but lots of sqlites in memory are happy together.
-        'egg': []
+        'default': [], # normally would have overrides, but lots of sqlites in memory are happy together.
+        'egg': [{}, {}]
     },
     'DATABASE_ROUTER_DELEGATE': 'test_project.router.HamAndEggRouter'
 }
@@ -300,28 +316,98 @@ populate_databases(delegate_router_settings)
 
 @override_settings(**delegate_router_settings)
 class FullyConfiguredTest(PinDBTestCase):
-    def test_router(self):
-        pass
-        # self.assertTrue(
-        #     dj_db.router.db_for_read(HamModel) in ["default-0", "default-1"]
-        # )
-        # self.assertRaises(
-        #     UnpinnedWriteException,
-        #     dj_db.router.db_for_write,
-        #     HamModel
-        # )
-        # self.assertTrue(
-        #     dj_db.router.db_for_read(EggModel) in ["egg"]
-        # )
-        # self.assertRaises(
-        #     UnpinnedWriteException,
-        #     dj_db.router.db_for_write,
-        #     EggModel
-        # )
-        # ham1 = HamModel.objects.create()
-        # ham2 = HamModel.objects.create()
-        # egg1 = EggModel.objects.fil
-        # self.assertTrue(dj_db.router.allow_relation(ham1, ham2))
-        # self.assertTrue(dj_db.router.allow_syncdb("default", HamModel))
-        # self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
+    def test_internals(self):
+        self.assertEqual(pindb._locals.DB_SET_SIZES['default'], -1)
+        self.assertEqual(pindb._locals.DB_SET_SIZES['egg'], 1)
 
+    def test_pinning(self):
+        # pinning is reflected in is_pinned
+        for master in settings.MASTER_DATABASES:
+            self.assertFalse(pindb.is_pinned(master))
+            pindb.pin(master)
+            self.assertTrue(pindb.is_pinned(master))
+        # unpin_all resets the state.
+        pindb.unpin_all()
+        for master in settings.MASTER_DATABASES:
+            self.assertFalse(pindb.is_pinned(master))
+
+        pindb.pin("default")
+        # pinning state is available as a set.
+        pinned1 = pindb.get_pinned()
+        self.assertTrue('default' in pinned1)
+        # unpinning doesn't affect the previous set.
+        pindb.unpin_all()
+        pinned2 = pindb.get_pinned()
+        self.assertTrue('default' in pinned1)
+        self.assertFalse('default' in pinned2)
+
+        # we can keep track of new pins vs. carried-over pins
+        #  i.e. pins that stick for the replication lag period.
+        self.assertEqual(0, len(pindb.get_newly_pinned()))
+        pindb.pin("default")
+        self.assertEqual(1, len(pindb.get_newly_pinned()))
+        pindb.unpin_all()
+        self.assertEqual(0, len(pindb.get_newly_pinned()))
+        pindb.pin("default", count_as_new=False)
+        self.assertEqual(0, len(pindb.get_newly_pinned()))
+        # it counts as pinned even if we don't count it as new.
+        self.assertEqual(1, len(pindb.get_pinned()))
+
+    @patch("pindb.randint")
+    def test_get_slave(self, mock_randint):
+        mock_randint.return_value = 0
+        self.assertEqual(pindb.get_slave("default"), "default")
+        mock_randint.return_value = 1
+        self.assertEqual(pindb.get_slave("default"), "default")
+
+        # gets the master if there are no replicas
+        mock_randint.return_value = 0
+        self.assertEqual(pindb.get_slave("egg"), "egg-0")
+        mock_randint.return_value = 1
+        self.assertEqual(pindb.get_slave("egg"), "egg-1")
+
+        # nonexistent or unmanaged DATABASES should throw keyerror.
+        self.assertRaises(KeyError, pindb.get_slave, "frob")
+        self.assertRaises(KeyError, pindb.get_slave, "nope")
+
+    def test_router(self):
+        self.assertEqual(
+            dj_db.router.db_for_read(HamModel), "default"
+        )
+        self.assertRaises(
+            UnpinnedWriteException,
+            dj_db.router.db_for_write,
+            HamModel
+        )
+        self.assertTrue(
+            dj_db.router.db_for_read(EggModel) in ["egg-0", "egg-1"]
+        )
+        self.assertRaises(
+            UnpinnedWriteException,
+            dj_db.router.db_for_write,
+            EggModel
+        )
+        pindb.pin("default")
+        try:
+            self.assertEqual('default', dj_db.router.db_for_write(HamModel))
+        except UnpinnedWriteException:
+            self.fail("Expected to be able to write after pinning.")
+
+        ham1 = HamModel.objects.create()
+        ham2 = HamModel.objects.create()
+        # pinning a different DB doesn't allow writes on others.
+        self.assertRaises(
+            UnpinnedWriteException,
+            dj_db.router.db_for_write,
+            EggModel
+        )
+        pindb.pin("egg")
+        try:
+            egg = EggModel.objects.create()
+        except UnpinnedWriteException:
+            self.fail("Expected to be able to write after pinning.")
+
+        self.assertTrue(dj_db.router.allow_relation(ham1, ham2))
+        self.assertTrue(dj_db.router.allow_syncdb("default", HamModel))
+        self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
+        self.assertEqual(dj_db.router.db_for_read(FrobModel), "default")
