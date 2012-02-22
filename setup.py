@@ -65,7 +65,7 @@ setup(
     maintainer_email = 'jdunck@votizen.com',
     keywords = ['django', 'multidb', 'router'],
     license = 'MIT',
-    tests_require=['django>=1.2.0'],    
+    tests_require=['django>=1.2.0', 'django-override-settings>=1.2', 'mock>=0.7.2'],    
     cmdclass={
         "test": RunTests,
     },

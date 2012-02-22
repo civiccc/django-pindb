@@ -4,22 +4,20 @@ from threading import local
 from itertools import cycle
 from random import randint
 from warnings import warn
+
 from django.conf import settings
 from django.utils import importlib
-from django.utils.datastructures import SortedDict
+
+from .exceptions import PinDBException, PinDBConfigError, UnpinnedWriteException
+
+__all__ = (
+    'PinDBException', 'PinDBConfigError', 'UnpinnedWriteException',
+    'unpin_all', 'pin', 'get_pinned', 'get_newly_pinned',
+    'is_pinned', 'get_slave', 'unpinned_slave',
+    'populate_replicas', 'PinDBRouter'
+)
 
 _locals = local()
-
-class PinDBException(Exception):
-    pass
-
-class PinDBConfigError(PinDBException, ValueError):
-    pass
-
-
-class UnpinnedWriteException(PinDBException):
-    pass
-
 
 def unpin_all():
     # the authoritative set of pinned alias.
@@ -54,6 +52,10 @@ def _make_replica_alias(master_alias, replica_num):
     return REPLICA_TEMPLATE % (master_alias, replica_num)
 
 NUM_REPLICAS = {} # number of replicas for each db set, loaded when the Router is constructed.
+
+# TODO: add an option for reading from the slave once one is selected in a given pinning context;
+#  This would allow for replicas in a given db set having different amounts of lag.
+#  Otherwise we could still get inconsistent reads when round-robining among replicas.
 def get_slave(master_alias):
     if NUM_REPLICAS[master_alias] == -1:
         return master_alias
@@ -77,24 +79,25 @@ class unpinned_slave(object):
         if any((type, value, tb)):
             raise type, value, tb
 
+# TODO: add logging to aid debugging client code.
+def populate_replicas(masters, slaves_overrides):
+    if not 'default' in masters:
+        raise PinDBConfigError("You must declare a default master")
 
-# FIXME: add logging to aid debugging client code.
-def populate_replicas(masters, slave_overrides):
     ret = {}
     for alias, master_values in masters.items():
         ret[alias] = master_values
-        for i, slave_overrides in enumerate(slave_overrides[alias]):
+        try:
+            slave_overrides = slaves_overrides[alias]
+        except KeyError:
+            raise PinDBConfigError("No slave settings found for db set %s" % alias)
+        for i, slave_override in enumerate(slave_overrides):
             replica_alias = _make_replica_alias(alias, i)
             replica_settings = master_values.copy()
-            replica_settings.update(slave_overrides)
-            if not 'TEST_MIRROR' in replica_settings:
-                replica_settings['TEST_MIRROR'] = alias
+            replica_settings.update(slave_override)
+            replica_settings['TEST_MIRROR'] = alias
             ret[replica_alias] = replica_settings
 
-    if not "default" in ret:
-        if not isinstance(masters, SortedDict):
-            raise ValueError("Either name a master default or make MASTER_DATABASES stable with SortedDict.")
-        ret["default"] = masters[masters.keys()[0]]
     return ret
 
 class DummyRouter(object):
@@ -110,7 +113,7 @@ class DummyRouter(object):
     def allow_syncdb(slef, db, model):
         return True
 
-class PinDBRouter(object):
+class PinDBRouter(object): 
     def __init__(self):
         if (not hasattr(settings, 'MASTER_DATABASES') or
             not hasattr(settings, 'DATABASE_SETS')):
@@ -123,7 +126,7 @@ class PinDBRouter(object):
                 warn("No replicas found for %s; using just the master" % alias)
 
         # defer master selection to a domain-specific router.
-        delegate = getattr(settings, DATABASE_ROUTER_DELEGATE, None)
+        delegate = getattr(settings, 'DATABASE_ROUTER_DELEGATE', None)
         if delegate:
             module_path, class_name = delegate.rsplit('.', 1)
             mod = importlib.import_module(module_path)
@@ -135,12 +138,19 @@ class PinDBRouter(object):
     
     def db_for_read(self, model, **hints):
         master_alias = self.delegate.db_for_read(model, **hints)
+        # allow anything unmanaged by the db set system to work unhindered.
+        if not master_alias in settings.MASTER_DATABASES:
+            return master_alias
         if is_pinned(master_alias):
             return master_alias
         return get_slave(master_alias)
 
     def db_for_write(self, model, **hints):
         master_alias = self.delegate.db_for_write(model, **hints)
+        # allow anything unmanaged by the db set system to work unhindered.
+        if not master_alias in settings.MASTER_DATABASES:
+            return master_alias
+
         if not is_pinned(master_alias):
             raise UnpinnedWriteException("Writes to %s aren't allowed because reads aren't pinned to it." % master_alias)
         return master_alias
@@ -148,6 +158,6 @@ class PinDBRouter(object):
     def allow_relation(self, obj1, obj2, **hints):
         return self.delegate.allow_relation(obj1, obj2, **hints)
 
-    def allow_syncdb(slef, db, model):
+    def allow_syncdb(self, db, model):
         return self.delegate.allow_syncdb(db, model)
     
