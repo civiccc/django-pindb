@@ -1,4 +1,4 @@
-__version__  =  (0, 1, 3) # remember to change setup.py
+__version__  =  (0, 1, 4) # remember to change setup.py
 
 from threading import local
 from itertools import cycle
@@ -82,6 +82,24 @@ class unpinned_replica(object):
     def __exit__(self, type, value, tb):
         if self.was_pinned:
             pin(self.alias)
+
+        if any((type, value, tb)):
+            raise type, value, tb
+
+class master(object):
+    # TODO: make this optionally take a list of models for which to pin appropriately.
+    # FIXME: test this.
+    def __init__(self, alias):
+        self.alias = alias
+
+    def __enter__(self):
+        self.was_pinned = is_pinned(self.alias)
+        if self.was_pinned:
+            pin(self.alias)
+
+    def __exit__(self, type, value, tb):
+        if self.was_pinned:
+            _unpin_one(self.alias)
 
         if any((type, value, tb)):
             raise type, value, tb
