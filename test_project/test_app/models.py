@@ -7,4 +7,4 @@ class HamModel(models.Model):
     pass
 
 class FrobModel(models.Model):
-	pass
+    pass

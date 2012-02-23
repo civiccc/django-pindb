@@ -245,15 +245,27 @@ class NoDelegateTest(PinDBTestCase):
         self.assertEqual(1, len(pindb.get_pinned()))
 
     @patch("pindb.randint")
-    def test_get_slave(self, mock_randint):
+    def test_unpinned_replica(self, mock_randint):
+        pindb.pin("default")
+        self.assertEqual(
+            dj_db.router.db_for_read(HamModel), "default"
+        )
+        with pindb.unpinned_replica("default"):
+            mock_randint.return_value = 1
+            self.assertEqual(
+                dj_db.router.db_for_read(HamModel), "default-1"
+            )
+
+    @patch("pindb.randint")
+    def test_get_replica(self, mock_randint):
         mock_randint.return_value = 0
-        self.assertEqual(pindb.get_slave("default"), "default-0")
+        self.assertEqual(pindb.get_replica("default"), "default-0")
         mock_randint.return_value = 1
-        self.assertEqual(pindb.get_slave("default"), "default-1")
+        self.assertEqual(pindb.get_replica("default"), "default-1")
 
         # gets the master if there are no replicas
-        self.assertEqual(pindb.get_slave("egg"), "egg")
-        self.assertRaises(KeyError, pindb.get_slave, "frob")
+        self.assertEqual(pindb.get_replica("egg"), "egg")
+        self.assertRaises(KeyError, pindb.get_replica, "frob")
 
     def test_router(self):
         self.assertTrue(
@@ -352,21 +364,21 @@ class FullyConfiguredTest(PinDBTestCase):
         self.assertEqual(1, len(pindb.get_pinned()))
 
     @patch("pindb.randint")
-    def test_get_slave(self, mock_randint):
+    def test_get_replica(self, mock_randint):
         mock_randint.return_value = 0
-        self.assertEqual(pindb.get_slave("default"), "default")
+        self.assertEqual(pindb.get_replica("default"), "default")
         mock_randint.return_value = 1
-        self.assertEqual(pindb.get_slave("default"), "default")
+        self.assertEqual(pindb.get_replica("default"), "default")
 
         # gets the master if there are no replicas
         mock_randint.return_value = 0
-        self.assertEqual(pindb.get_slave("egg"), "egg-0")
+        self.assertEqual(pindb.get_replica("egg"), "egg-0")
         mock_randint.return_value = 1
-        self.assertEqual(pindb.get_slave("egg"), "egg-1")
+        self.assertEqual(pindb.get_replica("egg"), "egg-1")
 
         # nonexistent or unmanaged DATABASES should throw keyerror.
-        self.assertRaises(KeyError, pindb.get_slave, "frob")
-        self.assertRaises(KeyError, pindb.get_slave, "nope")
+        self.assertRaises(KeyError, pindb.get_replica, "frob")
+        self.assertRaises(KeyError, pindb.get_replica, "nope")
 
     def test_router(self):
         self.assertEqual(
@@ -399,11 +411,6 @@ class FullyConfiguredTest(PinDBTestCase):
             dj_db.router.db_for_write,
             EggModel
         )
-        # it should be possible to explicitly sidestep this barrier for e.g. logging
-        try:
-            dj_db.router.db_for_write(EggModel, pindb_sidestep=True)
-        except UnpinnedWriteException:
-            self.fail("Expected to be able to explicitly sidestep write barrier.")
 
         pindb.pin("egg")
         try:

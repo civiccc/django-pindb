@@ -1,29 +1,118 @@
+Provides database replica pinning, round-robin read slave, allows unmanaged databases to be used side-by-side, and allows delegate routers to decide which DB set to use.
+
+ TL;DR API:
+         # Try to save without pinning:
+         foo = Model.objects.all()[0]
+         foo.save() # UnpinnedWriteException raised
+
+         # pin to a master
+         pindb.pin('master-alias')
+         # now ORM usage will hit only the master.
+
+         # sidestep the current pinning
+
+         with pindb.unpinned_slave('master-alias'):
+             # ORM usage will now hit a replica
+         # or
+         queryset.using(pindb.get_slave('master-alias'))
+
+         # Initialize/end the container:
+         pindb.unpin_all()
+
+Installation
+    pip install pindb
+
+    Add pindb.PinDBRouter to DATABASE_ROUTERS.
+
+    If you need to manage more than 1 master/slave set, add PINDB_DELEGATE_ROUTERS for pindb to defer to on DB set selection
+
+    Define MASTER_DATABASES, same schema as DATABASES.
+
+      DATABASES = {
+        "unmanaged": {
+          # HOST0, etc.
+        }
+      }
+
+      MASTER_DATABASES = {
+        "default": {
+          # HOST1, etc.
+        },
+        "some_other_master": {
+          ...
+        }
+      }
+
+    Define DATABASE_SETS which overrides specific settings for replicas, e.g. 
+
+      DATABASE_SETS = {
+        "default": [{HOST:HOST1}, {HOST:HOST2}, ...],
+        "some_other_master": [...] # zero or more replicas is fine.
+      }
+
+    Finalize DATABASES with pindb.populate_replicas:
+
+      DATABASES.update(populate_replicas(MASTER_DATABASES, DATABASE_SETS))
+
+    Add pindb.middleware.PinDBMiddleware to your MIDDLEWARE_CLASSES before any expected database access.
+
+    Throughout your codebase, if you intend to write, declare that as early as possible to avoid inconsistent reads off the related replicas:
+
+      pin("default")
+
+    That will cause all future reads to use the master and allow writes to occur.
+
+    To use under celery, hook celery.signals.task_postrun to pindb.unpin_all:
+
+      import pindb
+      from celery.signals import task_postrun
+
+      def end_pinning(**kwargs):
+        pindb.unpin_all()
+      task_postrun.connect(end_pinning)
+
+Further usage notes
+
+    Exceptions raised:
+      PinDBConfigError may be caused by:
+        1) your settings do not include MASTER_DATABASES and DATABASE_SETS
+        2) your MASTER_DATABASES do not include a "default" and populate_replicas is called without passing unmanaged_default=True.
+        3) you declared an alias in MASTER_DATABASES which does not have a related DATABASE_SETS entry
+
+      UnpinnedWriteException may be caused by:
+        1) Model.objects.create, Model.save, qs.update, qs.delete without previously calling pindb.pin for the master
+
+      Note that writes to unmanaged aliases (that is, ones unlisted in MASTER_DATABASES and related DATABASE_SETS) are allowed at any time.
+
+      If you wish to read from a replica despite having previously pinned the master, you can do so with
+
+        with pindb.unpinned_replica(alias):
+          # code which reads from replicas
+
 Requirements/definitions:
 
-       We have multiple separate masters (not sharded, just different kinds
-of data and access patterns).  Let's call a grouping of a master and
-its replicas a "db set".
+      We have multiple separate masters (not necessarily sharded).  Let's call a grouping of a master and its replicas a "db set".
 
-       We would like to have read replicas of these masters, and we would
+      We would like to have read replicas of these masters, and we would
 like to read from replicas as much as possible and we would like all
 writes to go to the master of the set.  But we would also like reads
 to be consistent to writers.
 
-       We would like this to be possible for web request cycles, but also
+      We would like this to be possible for web request cycles, but also
 for units of work like tasks or shell scripts.  So we call this unit
 of work the "pinning context".
 
-       Writes to a given master should continue to read from the master to
+      Writes to a given master should continue to read from the master to
 avoid inconsistency in the replication lag window, so there will be an
 API for declaring that.  Declaring (or otherwise preferring) that a
 set master is needed is "pinning" and the group of pins for all db
 sets is called the "pinned set".
 
-       Code which plans on writing (or needs the very lastest data) should
+      Code which plans on writing (or needs the very lastest data) should
 be able to declare that as early as possible to get a fully-consistent
 view from the master(s).
 
-       It should be a clear error if we've made a mistake in pinning (that
+      It should be a clear error if we've made a mistake in pinning (that
 is, writing after reading from a set).  The issue here is that if we
 allow reads (not knowing that a write is coming) that gives an
 inconsistency window.
@@ -32,37 +121,17 @@ inconsistency window.
 master, writes to master, fails.  Or gets a PK that's been mutated in
 master so that it shouldn't have been processed, etc.
 
-       Code which needs to write without pinning the whole container (e.g. a logging table) 
+      Code which needs to write without pinning the whole container (e.g. a logging table) 
 should be able to side-step the pinning.
 
-    We should be able to manage the db sets in settings with minimal repetition and it should compose well with multiple settings files.
+      We should be able to manage the db sets in settings with minimal repetition and it 
+should compose well with multiple settings files.
        
 
 Solution:
 
-       TL;DR API:
-               # Try to save without pinning:
-               foo = Model.objects.all()[0]
-               foo.save() # UnpinnedWriteException raised
-
-               # pin to a master
-               pindb.pin('master-alias')
-               # now ORM usage will hit only the master.
-
-               # sidestep the current pinning
-
-               with pindb.unpinned_slave('master-alias'):
-                   # ORM usage will now hit a replica
-               # or
-               queryset.using(pindb.get_slave('master-alias'))
-
-               # Initialize/end the container:
-               pindb.unpin_all()
-
-       In more detail:
-
        We use a threadlocal global to hold the pinned set.  This feels
-icky, but until we moved to evented models, passing around the pinned
+icky, but until we need an evented models, passing around the pinned
 set seems like a needless tax.  It would be possible to pass the pinned set around instead if we needed to support an evented execution model.
 
        The database router will then respect pinned set.

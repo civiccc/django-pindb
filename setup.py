@@ -55,10 +55,10 @@ else:
 setup(
     name = 'django-pindb',
     packages=find_packages(),
-    version='0.1.1', # remember to change __init__
+    version='0.1.3', # remember to change __init__
     description = 'Manages master/replica pinning for django',
     long_description = long_description,
-    url = 'http://github.com/votizen/django-pindb',
+    url = 'https://github.com/votizen/django-pindb',
     author = 'Jeremy Dunck',
     author_email = 'jdunck@votizen.com',
     maintainer = 'Jeremy Dunck',

@@ -1,4 +1,4 @@
-__version__  =  (0, 1, 1) # remember to change setup.py
+__version__  =  (0, 1, 3) # remember to change setup.py
 
 from threading import local
 from itertools import cycle
@@ -13,7 +13,7 @@ from .exceptions import PinDBException, PinDBConfigError, UnpinnedWriteException
 __all__ = (
     'PinDBException', 'PinDBConfigError', 'UnpinnedWriteException',
     'unpin_all', 'pin', 'get_pinned', 'get_newly_pinned',
-    'is_pinned', 'get_slave', 'unpinned_slave',
+    'is_pinned', 'get_replica', 'unpinned_replica',
     'populate_replicas', 'PinDBRouter'
 )
 
@@ -42,7 +42,7 @@ def pin(alias, count_as_new=True):
 
 def _unpin_one(alias):
     """
-    Not intended for external use; just here for the unpinned_slave decorator below.
+    Not intended for external use; just here for the unpinned_replica decorator below.
     """
     _locals.pinned_set.remove(alias)    
 
@@ -60,17 +60,17 @@ def _make_replica_alias(master_alias, replica_num):
     return REPLICA_TEMPLATE % (master_alias, replica_num)
 
 
-# TODO: add an option for reading from the slave once one is selected in a given pinning context;
+# TODO: add an option for reading from the repliac once one is selected in a given pinning context;
 #  This would allow for replicas in a given db set having different amounts of lag.
 #  Otherwise we could still get inconsistent reads when round-robining among replicas.
-def get_slave(master_alias):
+def get_replica(master_alias):
     if _locals.DB_SET_SIZES[master_alias] == -1:
         return master_alias
     else:
         replica_num = randint(0, _locals.DB_SET_SIZES[master_alias])
         return _make_replica_alias(master_alias, replica_num)
 
-class unpinned_slave(object):
+class unpinned_replica(object):
     def __init__(self, alias):
         self.alias = alias
 
@@ -87,21 +87,21 @@ class unpinned_slave(object):
             raise type, value, tb
 
 # TODO: add logging to aid debugging client code.
-def populate_replicas(masters, slaves_overrides):
-    if not 'default' in masters:
+def populate_replicas(masters, replicas_overrides, unmanaged_default=False):
+    if not 'default' in masters and not unmanaged_default:
         raise PinDBConfigError("You must declare a default master")
 
     ret = {}
     for alias, master_values in masters.items():
         ret[alias] = master_values
         try:
-            slave_overrides = slaves_overrides[alias]
+            replica_overrides = replicas_overrides[alias]
         except KeyError:
-            raise PinDBConfigError("No slave settings found for db set %s" % alias)
-        for i, slave_override in enumerate(slave_overrides):
+            raise PinDBConfigError("No replica settings found for db set %s" % alias)
+        for i, replica_override in enumerate(replica_overrides):
             replica_alias = _make_replica_alias(alias, i)
             replica_settings = master_values.copy()
-            replica_settings.update(slave_override)
+            replica_settings.update(replica_override)
             replica_settings['TEST_MIRROR'] = alias
             ret[replica_alias] = replica_settings
 
@@ -150,9 +150,10 @@ class PinDBRouter(object):
         # allow anything unmanaged by the db set system to work unhindered.
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias
+
         if is_pinned(master_alias):
             return master_alias
-        return get_slave(master_alias)
+        return get_replica(master_alias)
 
     def db_for_write(self, model, **hints):
         master_alias = self.delegate.db_for_write(model, **hints)
@@ -162,7 +163,7 @@ class PinDBRouter(object):
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias
 
-        if not is_pinned(master_alias) and not 'pindb_sidestep' in hints:
+        if not is_pinned(master_alias):
             raise UnpinnedWriteException("Writes to %s aren't allowed because reads aren't pinned to it." % master_alias)
         return master_alias
 
