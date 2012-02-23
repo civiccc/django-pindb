@@ -1,4 +1,4 @@
-__version__  =  (0, 1, 8) # remember to change setup.py
+__version__ = (0, 1, 8)  # remember to change setup.py
 
 import contextlib
 from functools import wraps
@@ -33,7 +33,7 @@ def unpin_all():
 
 DB_SET_SIZES = {}
 def _init_state():
-    global DB_SET_SIZES    
+    global DB_SET_SIZES
     DB_SET_SIZES = {}
 
     unpin_all()
@@ -146,11 +146,13 @@ def with_replicas(aliases):
 
 
 class master(object):
-    """
-    with master("default"):
-        ...
+    """Context manager for temporarily writing to a master DB
 
-    Write to master despite (and without affecting) pinning state.
+    While active, any writes to the given DB set will go to the set's master,
+    regardless of pinning state. Pinning state is not changed by this. ::
+
+        with master("default"):
+            ...
 
     """
     # TODO: make this optionally take a list of models for which to pin appropriately.
@@ -274,14 +276,14 @@ class PinDbRouterBase(object):
     def allow_syncdb(self, db, model):
         return self.delegate.allow_syncdb(db, model)
 
-class StrictPinDBRouter(PinDbRouterBase): 
+class StrictPinDBRouter(PinDbRouterBase):
     def _for_write_with_policy(self, master_alias, model, **hints):
         if not is_pinned(master_alias):
             raise UnpinnedWriteException("Writes to %s aren't allowed because reads aren't pinned to it." % master_alias)
         return master_alias
-    
-class GreedyPinDBRouter(PinDbRouterBase): 
+
+class GreedyPinDBRouter(PinDbRouterBase):
     def _for_write_with_policy(self, master_alias, model, **hints):
         pin(master_alias)
         return master_alias
-    
+
