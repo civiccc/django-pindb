@@ -279,7 +279,7 @@ class NoDelegateTest(PinDBTestCase):
 
         # gets the master if there are no replicas
         self.assertEqual(pindb.get_replica("egg"), "egg")
-        self.assertRaises(KeyError, pindb.get_replica, "frob")
+        self.assertEqual(pindb.get_replica("frob"), "frob")
 
     def test_router(self):
         self.assertTrue(
@@ -390,9 +390,9 @@ class FullyConfiguredStrictTest(PinDBTestCase):
         mock_randint.return_value = 1
         self.assertEqual(pindb.get_replica("egg"), "egg-1")
 
-        # nonexistent or unmanaged DATABASES should throw keyerror.
-        self.assertRaises(KeyError, pindb.get_replica, "frob")
-        self.assertRaises(KeyError, pindb.get_replica, "nope")
+        # nonexistent or unmanaged DATABASES should return the alias
+        self.assertEqual(pindb.get_replica("frob"), "frob")
+        self.assertEqual(pindb.get_replica("nope"), "nope")
 
     def test_router(self):
         self.assertEqual(

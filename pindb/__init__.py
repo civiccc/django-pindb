@@ -1,4 +1,4 @@
-__version__  =  (0, 1, 5) # remember to change setup.py
+__version__  =  (0, 1, 6) # remember to change setup.py
 
 import contextlib
 from functools import wraps
@@ -66,10 +66,17 @@ def _make_replica_alias(master_alias, replica_num):
 #  This would allow for replicas in a given db set having different amounts of lag.
 #  Otherwise we could still get inconsistent reads when round-robining among replicas.
 def get_replica(master_alias):
-    if _locals.DB_SET_SIZES[master_alias] == -1:
+    try:
+        effective_size = _locals.DB_SET_SIZES[master_alias]
+    except KeyError:
+        # this happens if the main router isn't a PinDB router.
+        #  in that case, we're meant to be disabled;
+        #  just return master_alias as it's the best we can do.
+        return master_alias
+    if effective_size == -1:
         return master_alias
     else:
-        replica_num = randint(0, _locals.DB_SET_SIZES[master_alias])
+        replica_num = randint(0, effective_size)
         return _make_replica_alias(master_alias, replica_num)
 
 class unpinned_replica(object):
