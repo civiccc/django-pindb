@@ -19,6 +19,12 @@ Provides database replica pinning, round-robin read slave, allows unmanaged data
          # Initialize/end the container:
          pindb.unpin_all()
 
+         with unpinned_replica(alias):
+            ... # read from slaves despite pinning state
+ 
+         with master(alias):
+            ... # write to master despite pinning state
+
 Installation
     pip install pindb
 
@@ -88,6 +94,11 @@ Further usage notes
 
         with pindb.unpinned_replica(alias):
           # code which reads from replicas
+
+      If you wish to write to a master despite not having pinned to it, you can do so with:
+
+        with pindb.master(alias):
+          # code which writes to the db
 
 Requirements/definitions:
 
