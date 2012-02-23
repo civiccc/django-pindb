@@ -13,10 +13,12 @@ from django.utils import importlib
 
 # a backport from django 1.4
 from override_settings import override_settings
+import anyjson
 
 from test_project.test_app.models import HamModel, EggModel, FrobModel
 
 import pindb
+from pindb import middleware
 from pindb.exceptions import PinDBConfigError, UnpinnedWriteException
 
 
@@ -490,3 +492,39 @@ class FullyConfiguredGreedyTest(PinDBTestCase):
         ham1 = HamModel.objects.create()
         self.assertEqual(pindb.is_pinned("default"), True)
         self.assertEqual(pindb.is_pinned("egg"), False)
+
+
+@override_settings(**delegate_greedy_router_settings)
+class GreedyMiddlewareTest(PinDBTestCase):
+    def _get_response_cookie(self, url):
+        response = self.client.post(url)
+        self.assertTrue(middleware.PINNING_COOKIE in response.cookies)
+        return sorted(
+                anyjson.loads(response.cookies[middleware.PINNING_COOKIE].value)
+        )
+
+    def test_read(self):
+        response = self.client.post('/test_app/read/')
+        self.assertFalse(middleware.PINNING_COOKIE in response.cookies)
+    
+    @patch('pindb.middleware.time')
+    def test_write(self, mock_time):
+        mock_time.return_value = 1.0
+        cookie = self._get_response_cookie('/test_app/write/')
+        self.assertEqual(cookie, [["default", 1.0 + middleware.PINNING_SECONDS]])
+        mock_time.return_value = 2.0
+        cookie = self._get_response_cookie('/test_app/write/')
+        self.assertEqual(cookie, [["default", 2.0 + middleware.PINNING_SECONDS]])
+
+    @patch('pindb.middleware.time')
+    def test_write_with_existing(self, mock_time):
+        mock_time.return_value = 1.0
+        cookie = self._get_response_cookie('/test_app/write/')
+        self.assertEqual(cookie, [["default", 1.0 + middleware.PINNING_SECONDS]])
+        mock_time.return_value = 2.0
+
+        cookie = self._get_response_cookie('/test_app/create_one_pin/')
+        self.assertEqual(cookie, [
+            ["default", 1.0 + middleware.PINNING_SECONDS],
+            ["egg", 2.0 + middleware.PINNING_SECONDS],
+        ])

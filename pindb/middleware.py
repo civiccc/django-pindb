@@ -1,5 +1,5 @@
 from time import time
-
+import anyjson
 from django.conf import settings
 
 from . import pin, get_newly_pinned, unpin_all
@@ -56,10 +56,10 @@ class PinDBMiddleware(object):
         if not PINNING_COOKIE in request.COOKIES:
             return
 
-        for pinned, until in _get_request_pins(request.COOKIES[PINNING_COOKIE])
-                    # keep track of existing end times for the return trip.
-                    request._pinned_until[pinned] = until
-                    pin(pinned, count_as_new=False)
+        for pinned, until in _get_request_pins(request.COOKIES[PINNING_COOKIE]):
+            # keep track of existing end times for the return trip.
+            request._pinned_until[pinned] = until
+            pin(pinned, count_as_new=False)
 
     def process_response(self, request, response):
         pinned_until = _get_response_pins(request._pinned_until)

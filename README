@@ -206,3 +206,38 @@ signals, respectively, will handle the call to
 pindb.unpin_all()
 
 TODO: Use signed cookies if available (dj 1.4+) for web pinning context.
+
+Example configuration:
+
+  MASTER_DATABASES = {
+      'default': {
+          'NAME': 'db1',
+          'ENGINE': DB_ENGINE,
+          'USER': '...',
+          'PASSWORD': '...',
+          'HOST': '10.0.1.0',
+          'PORT': 3306,
+          'OPTIONS': DB_OPTIONS
+      },
+      'api': {
+          'NAME': 'db2',
+          'ENGINE': DB_ENGINE,
+          'USER': '...',
+          'PASSWORD': '...',
+          'HOST': '10.0.2.0',
+          'PORT': 3306,
+          'OPTIONS': DB_OPTIONS
+      },
+  }
+
+  DATABASE_SETS = {
+      "default": [{'HOST': '10.0.1.1'},{'HOST': '10.0.1.2'}],
+      "api": [{'HOST': '10.0.2.1'}]
+  }
+
+  DATABASES = {...}
+
+  DATABASES.update(pindb.populate_replicas(MASTER_DATABASES, DATABASE_SETS))
+
+  PINDB_DELEGATE_ROUTERS = ["myapp.router.Router"]
+  DATABASE_ROUTERS = ['pindb.GreedyPinDBRouter']

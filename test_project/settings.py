@@ -12,3 +12,8 @@ INSTALLED_APPS = (
     'pindb',
     'test_app',
 )
+
+MIDDLEWARE_CLASSES = (
+    'pindb.middleware.PinDBMiddleware',
+)
+

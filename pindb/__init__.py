@@ -1,4 +1,4 @@
-__version__  =  (0, 1, 6) # remember to change setup.py
+__version__  =  (0, 1, 7) # remember to change setup.py
 
 import contextlib
 from functools import wraps
@@ -28,7 +28,7 @@ def unpin_all():
     # the authoritative set of pinned alias.
     _locals.pinned_set = set()
     # the newly-pinned ones for advising the pinned context (i.e. for persistence.)
-    _locals.newly_pinned = set()
+    _locals.newly_pinned_set = set()
 
 def _init_state():
     unpin_all()
@@ -40,22 +40,27 @@ _init_state()
 def pin(alias, count_as_new=True):
     _locals.pinned_set.add(alias)
     if count_as_new:
-        _locals.newly_pinned.add(alias)
+        _locals.newly_pinned_set.add(alias)
 
-def _unpin_one(alias):
+def _unpin_one(alias, also_unpin_new=True):
     """
-    Not intended for external use; just here for the unpinned_replica decorator below.
+    Not intended for external use; just here for the decorators below.
     """
-    _locals.pinned_set.remove(alias)    
+    _locals.pinned_set.remove(alias)
+    if also_unpin_new:
+        _locals.newly_pinned_set.discard(alias)
 
 def get_pinned():
     return _locals.pinned_set.copy()
 
 def get_newly_pinned():
-    return _locals.newly_pinned.copy()
+    return _locals.newly_pinned_set.copy()
 
 def is_pinned(alias):
     return alias in _locals.pinned_set
+
+def is_newly_pinned(alias):
+    return alias in _locals.newly_pinned_set
 
 REPLICA_TEMPLATE = "%s-%s"
 def _make_replica_alias(master_alias, replica_num):
@@ -91,12 +96,13 @@ class unpinned_replica(object):
 
     def __enter__(self):
         self.was_pinned = is_pinned(self.alias)
+        self.was_newly_pinned = is_newly_pinned(self.alias)
         if self.was_pinned:
-            _unpin_one(self.alias)
+            _unpin_one(self.alias, True)
 
     def __exit__(self, type, value, tb):
         if self.was_pinned:
-            pin(self.alias)
+            pin(self.alias, self.was_newly_pinned)
 
         if any((type, value, tb)):
             raise type, value, tb
@@ -141,11 +147,15 @@ class master(object):
 
     def __enter__(self):
         self.was_pinned = is_pinned(self.alias)
-        pin(self.alias)
+        self.was_newly_pinned = is_newly_pinned(self.alias)
+        pin(self.alias, False)
 
     def __exit__(self, type, value, tb):
         if not self.was_pinned:
-            _unpin_one(self.alias)
+            _unpin_one(self.alias, False)
+        if not self.was_newly_pinned:
+            # FIXME: should be abstracted somewhere, whoops.
+            _locals.newly_pinned_set.discard(self.alias)
 
         if any((type, value, tb)):
             raise type, value, tb
@@ -260,7 +270,6 @@ class StrictPinDBRouter(PinDbRouterBase):
     
 class GreedyPinDBRouter(PinDbRouterBase): 
     def _for_write_with_policy(self, master_alias, model, **hints):
-        if not is_pinned(master_alias):
-            pin(master_alias)
+        pin(master_alias)
         return master_alias
     
