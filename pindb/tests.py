@@ -1,5 +1,6 @@
 import tempfile, os
 from mock import patch
+from copy import deepcopy
 
 from django.http import HttpRequest, HttpResponse
 from django import db as dj_db
@@ -44,6 +45,15 @@ Test task context:
     test writing after pinning
 """
 
+class InitTestCase(TestCase):
+    def setUp(self):
+        super(InitTestCase, self).setUp()
+        pindb.DB_SET_SIZES = {'wark':1}
+
+    def test_init_worked(self):
+        self.assertEqual({"wark":1}, pindb.DB_SET_SIZES)
+        pindb._init_state()
+        self.assertEqual({}, pindb.DB_SET_SIZES)
 
 # TODO: add coverage, COVERAGE_MODULE_EXCLUDES
 class PinDBTestCase(TestCase):
@@ -128,14 +138,18 @@ def populate_databases(settings_dict):
     db_dir = tempfile.mkdtemp()
     if 'DATABASES' not in settings_dict:
         settings_dict['DATABASES'] = {}
+    replicas =  pindb.populate_replicas(
+        settings_dict['MASTER_DATABASES'], 
+        settings_dict['DATABASE_SETS']
+    )
+
     settings_dict['DATABASES'].update(
-        pindb.populate_replicas(
-            settings_dict['MASTER_DATABASES'], 
-            settings_dict['DATABASE_SETS']
-        )
+        replicas
     )
     for alias, db in settings_dict['DATABASES'].items():
         db['NAME'] = os.path.join(db_dir, "test_%s" % alias)
+    from pprint import pprint 
+    pprint(settings_dict['DATABASES'])
 
 misconfigured_settings = {
     'DATABASE_ROUTERS': ['pindb.StrictPinDBRouter'],
@@ -210,8 +224,8 @@ populate_databases(no_delegate_router_settings)
 @override_settings(**no_delegate_router_settings)
 class NoDelegateTest(PinDBTestCase):
     def test_internals(self):
-        self.assertEqual(pindb._locals.DB_SET_SIZES['default'], 1)
-        self.assertEqual(pindb._locals.DB_SET_SIZES['egg'], -1)
+        self.assertEqual(pindb.DB_SET_SIZES['default'], 1)
+        self.assertEqual(pindb.DB_SET_SIZES['egg'], -1)
 
     def test_pinning(self):
         # pinning is reflected in is_pinned
@@ -277,7 +291,7 @@ class NoDelegateTest(PinDBTestCase):
         mock_randint.return_value = 0
         self.assertEqual(pindb.get_replica("default"), "default-0")
         mock_randint.return_value = 1
-        self.assertEqual(pindb.get_replica("default"), "default-1")
+        self.assertEqual(pindb.get_replica("default"), "default-0")
 
         # gets the master if there are no replicas
         self.assertEqual(pindb.get_replica("egg"), "egg")
@@ -343,8 +357,8 @@ populate_databases(delegate_strict_router_settings)
 @override_settings(**delegate_strict_router_settings)
 class FullyConfiguredStrictTest(PinDBTestCase):
     def test_internals(self):
-        self.assertEqual(pindb._locals.DB_SET_SIZES['default'], -1)
-        self.assertEqual(pindb._locals.DB_SET_SIZES['egg'], 1)
+        self.assertEqual(pindb.DB_SET_SIZES['default'], -1)
+        self.assertEqual(pindb.DB_SET_SIZES['egg'], 1)
 
     def test_pinning(self):
         # pinning is reflected in is_pinned
@@ -390,7 +404,7 @@ class FullyConfiguredStrictTest(PinDBTestCase):
         mock_randint.return_value = 0
         self.assertEqual(pindb.get_replica("egg"), "egg-0")
         mock_randint.return_value = 1
-        self.assertEqual(pindb.get_replica("egg"), "egg-1")
+        self.assertEqual(pindb.get_replica("egg"), "egg-0")
 
         # nonexistent or unmanaged DATABASES should return the alias
         self.assertEqual(pindb.get_replica("frob"), "frob")
@@ -466,6 +480,10 @@ delegate_greedy_router_settings = {
 
 populate_databases(delegate_greedy_router_settings)
 
+# for the GreedyMiddlewareTest testcase later.
+greedy_middleware_settings = deepcopy(delegate_greedy_router_settings)
+populate_databases(greedy_middleware_settings)
+
 @override_settings(**delegate_greedy_router_settings)
 class FullyConfiguredGreedyTest(PinDBTestCase):
     def test_router(self):
@@ -492,9 +510,16 @@ class FullyConfiguredGreedyTest(PinDBTestCase):
         ham1 = HamModel.objects.create()
         self.assertEqual(pindb.is_pinned("default"), True)
         self.assertEqual(pindb.is_pinned("egg"), False)
+        egg1 = EggModel.objects.create()
+        self.assertEqual(pindb.is_pinned("egg"), True)
+        pindb.unpin_all()
+        ham1a = HamModel.objects.get(pk=ham1.pk)
+        egg1a = EggModel.objects.get(pk=egg1.pk)
 
 
-@override_settings(**delegate_greedy_router_settings)
+
+
+@override_settings(**greedy_middleware_settings)
 class GreedyMiddlewareTest(PinDBTestCase):
     def _get_response_cookie(self, url):
         response = self.client.post(url)

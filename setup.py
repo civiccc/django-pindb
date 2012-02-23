@@ -55,7 +55,7 @@ else:
 setup(
     name = 'django-pindb',
     packages=find_packages(),
-    version='0.1.7', # remember to change __init__
+    version='0.1.8', # remember to change __init__
     description = 'Manages master/replica pinning for django',
     long_description = long_description,
     url = 'https://github.com/votizen/django-pindb',

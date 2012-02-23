@@ -1,4 +1,4 @@
-__version__  =  (0, 1, 7) # remember to change setup.py
+__version__  =  (0, 1, 8) # remember to change setup.py
 
 import contextlib
 from functools import wraps
@@ -29,10 +29,15 @@ def unpin_all():
     _locals.pinned_set = set()
     # the newly-pinned ones for advising the pinned context (i.e. for persistence.)
     _locals.newly_pinned_set = set()
+    _locals.chosen_replicas = {}
 
+DB_SET_SIZES = {}
 def _init_state():
+    global DB_SET_SIZES    
+    DB_SET_SIZES = {}
+
     unpin_all()
-    _locals.DB_SET_SIZES = {}
+    # FIXME: Init on every req, or move init-per-process stuff off locals.
 
 # initialize state
 _init_state()
@@ -72,7 +77,7 @@ def _make_replica_alias(master_alias, replica_num):
 #  Otherwise we could still get inconsistent reads when round-robining among replicas.
 def get_replica(master_alias):
     try:
-        effective_size = _locals.DB_SET_SIZES[master_alias]
+        effective_size = DB_SET_SIZES[master_alias]
     except KeyError:
         # this happens if the main router isn't a PinDB router.
         #  in that case, we're meant to be disabled;
@@ -81,8 +86,15 @@ def get_replica(master_alias):
     if effective_size == -1:
         return master_alias
     else:
+        previous_replica = _locals.chosen_replicas.get(master_alias)
+        if previous_replica:
+            return previous_replica
         replica_num = randint(0, effective_size)
-        return _make_replica_alias(master_alias, replica_num)
+
+        chosen_replica = _make_replica_alias(master_alias, replica_num)
+        _locals.chosen_replicas[master_alias] = chosen_replica
+
+        return chosen_replica
 
 class unpinned_replica(object):
     """
@@ -220,8 +232,8 @@ class PinDbRouterBase(object):
 
         # stash the # to chose from to reduce per-call overhead in the routing.
         for alias, master_values in settings.MASTER_DATABASES.items():
-            _locals.DB_SET_SIZES[alias] = len(settings.DATABASE_SETS[alias]) - 1
-            if _locals.DB_SET_SIZES[alias] == -1:
+            DB_SET_SIZES[alias] = len(settings.DATABASE_SETS[alias]) - 1
+            if DB_SET_SIZES[alias] == -1:
                 warn("No replicas found for %s; using just the master" % alias)
 
         # defer master selection to a domain-specific router.
