@@ -136,7 +136,7 @@ def populate_databases(settings_dict):
         db['NAME'] = os.path.join(db_dir, "test_%s" % alias)
 
 misconfigured_settings = {
-    'DATABASE_ROUTERS': ['pindb.PinDBRouter'],
+    'DATABASE_ROUTERS': ['pindb.StrictPinDBRouter'],
 } #because MASTER_DATAABASES and DATABASE_SETS is required.
 
 @override_settings(**misconfigured_settings)
@@ -151,7 +151,7 @@ class MisconfiguredTest(PinDBTestCase):
     
     def test_populate_replicas_catches_misconfiguration(self):
         no_default = {
-            'DATABASE_ROUTERS': ['pindb.PinDBRouter'],
+            'DATABASE_ROUTERS': ['pindb.StrictPinDBRouter'],
             'MASTER_DATABASES': dict([
                 ('ham', {
                     'NAME': ':memory:',
@@ -186,7 +186,7 @@ class MisconfiguredTest(PinDBTestCase):
             self.fail("Expected default to be acceptable config.")
 
 no_delegate_router_settings = {
-    'DATABASE_ROUTERS': ['pindb.PinDBRouter'],
+    'DATABASE_ROUTERS': ['pindb.StrictPinDBRouter'],
     'MASTER_DATABASES': {
         'default':  {
             'NAME': ':memory:',
@@ -257,6 +257,20 @@ class NoDelegateTest(PinDBTestCase):
             )
 
     @patch("pindb.randint")
+    def test_with_master(self, mock_randint):
+        mock_randint.return_value = 0
+        self.assertEqual(
+            dj_db.router.db_for_read(HamModel), "default-0"
+        )
+        with pindb.master("default"):
+            self.assertEqual(
+                dj_db.router.db_for_read(HamModel), "default"
+            )
+        self.assertEqual(
+            dj_db.router.db_for_read(HamModel), "default-0"
+        )
+
+    @patch("pindb.randint")
     def test_get_replica(self, mock_randint):
         mock_randint.return_value = 0
         self.assertEqual(pindb.get_replica("default"), "default-0")
@@ -298,8 +312,8 @@ class NoDelegateTest(PinDBTestCase):
         self.assertTrue(dj_db.router.allow_syncdb("default", HamModel))
         self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
 
-delegate_router_settings = {
-    'DATABASE_ROUTERS': ['pindb.PinDBRouter'],
+delegate_strict_router_settings = {
+    'DATABASE_ROUTERS': ['pindb.StrictPinDBRouter'],
     'DATABASES': {
         'frob': {
             'NAME': ':memory:',
@@ -322,10 +336,10 @@ delegate_router_settings = {
     },
     'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
 }
-populate_databases(delegate_router_settings)
+populate_databases(delegate_strict_router_settings)
 
-@override_settings(**delegate_router_settings)
-class FullyConfiguredTest(PinDBTestCase):
+@override_settings(**delegate_strict_router_settings)
+class FullyConfiguredStrictTest(PinDBTestCase):
     def test_internals(self):
         self.assertEqual(pindb._locals.DB_SET_SIZES['default'], -1)
         self.assertEqual(pindb._locals.DB_SET_SIZES['egg'], 1)
@@ -422,3 +436,57 @@ class FullyConfiguredTest(PinDBTestCase):
         self.assertTrue(dj_db.router.allow_syncdb("default", HamModel))
         self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
         self.assertEqual(dj_db.router.db_for_read(FrobModel), "default")
+
+delegate_greedy_router_settings = {
+    'DATABASE_ROUTERS': ['pindb.GreedyPinDBRouter'],
+    'DATABASES': {
+        'frob': {
+            'NAME': ':memory:',
+            'ENGINE': 'django.db.backends.sqlite3',
+        }
+    },
+    'MASTER_DATABASES': {
+        'default': {
+            'NAME': ':memory:',
+            'ENGINE': 'django.db.backends.sqlite3',
+        },
+        'egg': {
+            'NAME': ':memory:',
+            'ENGINE': 'django.db.backends.sqlite3',        
+        }
+    },
+    'DATABASE_SETS': {
+        'default': [], # normally would have overrides, but lots of sqlites in memory are happy together.
+        'egg': [{}, {}]
+    },
+    'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
+}
+
+populate_databases(delegate_greedy_router_settings)
+
+@override_settings(**delegate_greedy_router_settings)
+class FullyConfiguredGreedyTest(PinDBTestCase):
+    def test_router(self):
+        self.assertEqual(
+            dj_db.router.db_for_read(HamModel), "default"
+        )
+        self.assertEqual(pindb.is_pinned("default"), False)
+        self.assertEqual(
+            dj_db.router.db_for_write(HamModel), "default"
+        )
+        self.assertEqual(pindb.is_pinned("default"), True)
+
+        self.assertTrue(
+            dj_db.router.db_for_read(EggModel) in ["egg-0", "egg-1"]
+        )
+        self.assertEqual(pindb.is_pinned("egg"), False)
+        self.assertEqual(
+            dj_db.router.db_for_write(EggModel), "egg"
+        )
+        self.assertEqual(pindb.is_pinned("egg"), True)
+
+        pindb.unpin_all()
+
+        ham1 = HamModel.objects.create()
+        self.assertEqual(pindb.is_pinned("default"), True)
+        self.assertEqual(pindb.is_pinned("egg"), False)

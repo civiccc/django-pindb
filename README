@@ -1,26 +1,22 @@
-Provides database replica pinning, round-robin read slave, allows unmanaged databases to be used side-by-side, and allows delegate routers to decide which DB set to use.
+Provides database replica pinning, round-robin read replica, allows unmanaged databases to be used side-by-side, and allows delegate routers to decide which DB set to use.
 
  TL;DR API:
          # Try to save without pinning:
          foo = Model.objects.all()[0]
-         foo.save() # UnpinnedWriteException raised
+         
+         # UnpinnedWriteException raised under strict mode, or master pinning occurs under greedy mode.         
+         foo.save()
 
-         # pin to a master
-         pindb.pin('master-alias')
-         # now ORM usage will hit only the master.
-
-         # sidestep the current pinning
-
-         with pindb.unpinned_slave('master-alias'):
-             # ORM usage will now hit a replica
-         # or
-         queryset.using(pindb.get_slave('master-alias'))
+         # read only from the master, allow writes.
+         pindb.pin(alias)
 
          # Initialize/end the container:
          pindb.unpin_all()
 
          with unpinned_replica(alias):
-            ... # read from slaves despite pinning state
+            ... # read from replicas despite pinning state
+         # or 
+         queryset.using(pindb.get_replica('master-alias'))
  
          with master(alias):
             ... # write to master despite pinning state
@@ -28,9 +24,13 @@ Provides database replica pinning, round-robin read slave, allows unmanaged data
 Installation
     pip install pindb
 
-    Add pindb.PinDBRouter to DATABASE_ROUTERS.
+    Add pindb.StrictPinDBRouter or pindb.GreedyPinDBRouter to DATABASE_ROUTERS.
 
-    If you need to manage more than 1 master/slave set, add PINDB_DELEGATE_ROUTERS for pindb to defer to on DB set selection
+    StrictPinDBRouter requires that pinning be declared before a write is attempted.  The advantage is that read replicas are used as much as possible.  The disadvantage is that your code will need many declarations to explicitly allow and opt out of the pinning.
+
+    GreedyPinDBRouter will pin to a master as soon as a write occurs.  The advantage is that most of your code will just work.  The disadvantage is that you will use the read replicas less than possible.
+
+    If you need to manage more than 1 master/replica set, add PINDB_DELEGATE_ROUTERS for pindb to defer to on DB set selection
 
     Define MASTER_DATABASES, same schema as DATABASES.
 
@@ -128,7 +128,7 @@ is, writing after reading from a set).  The issue here is that if we
 allow reads (not knowing that a write is coming) that gives an
 inconsistency window.
 
-               e.g  process reads from slave, gets a PK that has been deleted in
+               e.g  process reads from replica, gets a PK that has been deleted in
 master, writes to master, fails.  Or gets a PK that's been mutated in
 master so that it shouldn't have been processed, etc.
 
@@ -148,7 +148,7 @@ set seems like a needless tax.  It would be possible to pass the pinned set arou
        The database router will then respect pinned set.
 
        The DATABASES dict in settings is "final" in the sense that it isn't
-structured with any master/slave semantics.  So we use an intermediate
+structured with any master/replica semantics.  So we use an intermediate
 setting for defining sets:
 
                MASTER_DATABASES = {
@@ -156,8 +156,9 @@ setting for defining sets:
                   ...
                }
 
-               DATABASE_SETS = {
-                 'master-alias': {'slave_overrides': [{'HOST':'someotherhost',...},],
+               DATABASE_SETS = { 
+                 'master-alias': [{'HOST':'someotherhost',...},], 
+                  # override some of the master settings
                }
 
        And replica config can be finalized:
@@ -176,7 +177,7 @@ TEST_MIRROR='master-alias' },
        If no master is named "default", then the master of your first db set will also 
 be aliased to "default".  You should use django.utils.datastructures.SortedDict to make that stable.
 
-      In order to compose pinning with selection of the appropriate master, there is a one additional setting: DATABASE_ROUTER_DELEGATE.  It has the same interface as a normal DATABASE_ROUTER, but db_for_read and db_for_write must only return master aliases.  Then an appropriate master or slave will be chosen for that db set.
+      In order to compose pinning with selection of the appropriate master, there is a one additional setting: DATABASE_ROUTER_DELEGATE.  It has the same interface as a normal DATABASE_ROUTER, but db_for_read and db_for_write must only return master aliases.  Then an appropriate master or replica will be chosen for that db set.
 
        The DB router will throw an error if db_for_write is called without
 declaring that it's OK.  The correct approach is to pin the DB you
@@ -184,13 +185,13 @@ intend to do writes to *before you read* from a replica.
 
        To explictly prefer a read replica despite pinning, use either:
 
-               with pindb.unpinned_slave('master-alias'):
+               with pindb.unpinned_replica('master-alias'):
                        ...
 
                or the .using method of a queryset.
 
-       If you would like to explicitly use a slave, pindb.get_slave()
-will return a slave alias.
+       If you would like to explicitly use a replica, pindb.get_replica()
+will return a replica alias.
 
        Pinning a set lasts the duration of a pinning context (once pinned, you can
 not unpin a DB).  If you want to write to a DB without pinning the container, 

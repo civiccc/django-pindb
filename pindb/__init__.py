@@ -1,5 +1,7 @@
-__version__  =  (0, 1, 4) # remember to change setup.py
+__version__  =  (0, 1, 5) # remember to change setup.py
 
+import contextlib
+from functools import wraps
 from threading import local
 from itertools import cycle
 from random import randint
@@ -14,7 +16,7 @@ __all__ = (
     'PinDBException', 'PinDBConfigError', 'UnpinnedWriteException',
     'unpin_all', 'pin', 'get_pinned', 'get_newly_pinned',
     'is_pinned', 'get_replica', 'unpinned_replica',
-    'populate_replicas', 'PinDBRouter'
+    'populate_replicas', 'StrictPinDBRouter', 'GreedyPinDBRouter'
 )
 
 _locals = local()
@@ -71,6 +73,12 @@ def get_replica(master_alias):
         return _make_replica_alias(master_alias, replica_num)
 
 class unpinned_replica(object):
+    """
+    with unpinned_replica("default"):
+        ...
+
+    Read from a replica despite pinning state.
+    """
     def __init__(self, alias):
         self.alias = alias
 
@@ -85,24 +93,73 @@ class unpinned_replica(object):
 
         if any((type, value, tb)):
             raise type, value, tb
+
+def _mash_aliases(aliases):
+    if not isinstance(aliases, basestring) and hasattr(aliases, '__iter__'):
+        aliases = set(aliases)
+    else:
+        aliases = set([aliases])
+    return aliases
+
+def with_replicas(aliases):
+    """
+    @with_replicas([alias,...])
+    def func...
+
+    Read from replicas despite pinning state.
+    """
+    aliases = _mash_aliases(aliases)
+    # FIXME: test this.
+    def make_wrapper(func):
+        replicas = [unpinned_replica(alias) for alias in aliases]
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with contextlib.nested(*replicas):
+                return func(*args, **kwargs)
+        return wrapper
+    return make_wrapper
+
 
 class master(object):
+    """
+    with master("default"):
+        ...
+
+    Write to master despite (and without affecting) pinning state.
+
+    """
     # TODO: make this optionally take a list of models for which to pin appropriately.
-    # FIXME: test this.
     def __init__(self, alias):
         self.alias = alias
 
     def __enter__(self):
         self.was_pinned = is_pinned(self.alias)
-        if self.was_pinned:
-            pin(self.alias)
+        pin(self.alias)
 
     def __exit__(self, type, value, tb):
-        if self.was_pinned:
+        if not self.was_pinned:
             _unpin_one(self.alias)
 
         if any((type, value, tb)):
             raise type, value, tb
+
+def with_masters(aliases):
+    """
+    @with_masters([alias,...])
+    def func...
+
+    Write to masters despite (and without affecting) pinning state.
+    """
+    aliases = _mash_aliases(aliases)
+    # FIXME: test this.
+    def make_wrapper(func):
+        masters = [master(alias) for alias in aliases]
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with contextlib.nested(*masters):
+                return func(*args, **kwargs)
+        return wrapper
+    return make_wrapper
 
 # TODO: add logging to aid debugging client code.
 def populate_replicas(masters, replicas_overrides, unmanaged_default=False):
@@ -138,7 +195,7 @@ class DummyRouter(object):
     def allow_syncdb(slef, db, model):
         return True
 
-class PinDBRouter(object): 
+class PinDbRouterBase(object):
     def __init__(self):
         if (not hasattr(settings, 'MASTER_DATABASES') or
             not hasattr(settings, 'DATABASE_SETS')):
@@ -159,7 +216,7 @@ class PinDBRouter(object):
             warn("Unable to load delegate router from settings.PINDB_DELEGATE_ROUTERS; using default and its replicas")
             # or just always use default's set.
             self.delegate = DummyRouter()
-    
+
     def db_for_read(self, model, **hints):
         master_alias = self.delegate.db_for_read(model, **hints)
         if master_alias is None:
@@ -180,14 +237,23 @@ class PinDBRouter(object):
         # allow anything unmanaged by the db set system to work unhindered.
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias
-
-        if not is_pinned(master_alias):
-            raise UnpinnedWriteException("Writes to %s aren't allowed because reads aren't pinned to it." % master_alias)
-        return master_alias
+        return self._for_write_with_policy(master_alias, model, **hints)
 
     def allow_relation(self, obj1, obj2, **hints):
         return self.delegate.allow_relation(obj1, obj2, **hints)
 
     def allow_syncdb(self, db, model):
         return self.delegate.allow_syncdb(db, model)
+
+class StrictPinDBRouter(PinDbRouterBase): 
+    def _for_write_with_policy(self, master_alias, model, **hints):
+        if not is_pinned(master_alias):
+            raise UnpinnedWriteException("Writes to %s aren't allowed because reads aren't pinned to it." % master_alias)
+        return master_alias
+    
+class GreedyPinDBRouter(PinDbRouterBase): 
+    def _for_write_with_policy(self, master_alias, model, **hints):
+        if not is_pinned(master_alias):
+            pin(master_alias)
+        return master_alias
     
