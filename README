@@ -24,11 +24,11 @@ Provides database replica pinning, round-robin read replica, allows unmanaged da
 Installation
     pip install pindb
 
-    Add pindb.StrictPinDBRouter or pindb.GreedyPinDBRouter to DATABASE_ROUTERS.
+    Add pindb.StrictPinDbRouter or pindb.GreedyPinDbRouter to DATABASE_ROUTERS.
 
-    StrictPinDBRouter requires that pinning be declared before a write is attempted.  The advantage is that read replicas are used as much as possible.  The disadvantage is that your code will need many declarations to explicitly allow and opt out of the pinning.
+    StrictPinDbRouter requires that pinning be declared before a write is attempted.  The advantage is that read replicas are used as much as possible.  The disadvantage is that your code will need many declarations to explicitly allow and opt out of the pinning.
 
-    GreedyPinDBRouter will pin to a master as soon as a write occurs.  The advantage is that most of your code will just work.  The disadvantage is that you will use the read replicas less than possible.
+    GreedyPinDbRouter will pin to a master as soon as a write occurs.  The advantage is that most of your code will just work.  The disadvantage is that you will use the read replicas less than possible.
 
     If you need to manage more than 1 master/replica set, add PINDB_DELEGATE_ROUTERS for pindb to defer to on DB set selection
 
@@ -240,4 +240,4 @@ Example configuration:
   DATABASES.update(pindb.populate_replicas(MASTER_DATABASES, DATABASE_SETS))
 
   PINDB_DELEGATE_ROUTERS = ["myapp.router.Router"]
-  DATABASE_ROUTERS = ['pindb.GreedyPinDBRouter']
+  DATABASE_ROUTERS = ['pindb.GreedyPinDbRouter']

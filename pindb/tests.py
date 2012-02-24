@@ -152,7 +152,7 @@ def populate_databases(settings_dict):
     pprint(settings_dict['DATABASES'])
 
 misconfigured_settings = {
-    'DATABASE_ROUTERS': ['pindb.StrictPinDBRouter'],
+    'DATABASE_ROUTERS': ['pindb.StrictPinDbRouter'],
 } #because MASTER_DATAABASES and DATABASE_SETS is required.
 
 @override_settings(**misconfigured_settings)
@@ -167,7 +167,7 @@ class MisconfiguredTest(PinDBTestCase):
     
     def test_populate_replicas_catches_misconfiguration(self):
         no_default = {
-            'DATABASE_ROUTERS': ['pindb.StrictPinDBRouter'],
+            'DATABASE_ROUTERS': ['pindb.StrictPinDbRouter'],
             'MASTER_DATABASES': dict([
                 ('ham', {
                     'NAME': ':memory:',
@@ -202,7 +202,7 @@ class MisconfiguredTest(PinDBTestCase):
             self.fail("Expected default to be acceptable config.")
 
 no_delegate_router_settings = {
-    'DATABASE_ROUTERS': ['pindb.StrictPinDBRouter'],
+    'DATABASE_ROUTERS': ['pindb.StrictPinDbRouter'],
     'MASTER_DATABASES': {
         'default':  {
             'NAME': ':memory:',
@@ -329,7 +329,7 @@ class NoDelegateTest(PinDBTestCase):
         self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
 
 delegate_strict_router_settings = {
-    'DATABASE_ROUTERS': ['pindb.StrictPinDBRouter'],
+    'DATABASE_ROUTERS': ['pindb.StrictPinDbRouter'],
     'DATABASES': {
         'frob': {
             'NAME': ':memory:',
@@ -454,7 +454,7 @@ class FullyConfiguredStrictTest(PinDBTestCase):
         self.assertEqual(dj_db.router.db_for_read(FrobModel), "default")
 
 delegate_greedy_router_settings = {
-    'DATABASE_ROUTERS': ['pindb.GreedyPinDBRouter'],
+    'DATABASE_ROUTERS': ['pindb.GreedyPinDbRouter'],
     'DATABASES': {
         'frob': {
             'NAME': ':memory:',
@@ -485,7 +485,7 @@ greedy_middleware_settings = deepcopy(delegate_greedy_router_settings)
 populate_databases(greedy_middleware_settings)
 
 @override_settings(**delegate_greedy_router_settings)
-class FullyConfiguredGreedyTest(PinDBTestCase):
+class FullyConfiguredGreedyTest(PinDBTestCase):  # I think this is the :memory: thing.
     def test_router(self):
         self.assertEqual(
             dj_db.router.db_for_read(HamModel), "default"

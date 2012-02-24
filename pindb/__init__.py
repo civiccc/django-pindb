@@ -16,7 +16,7 @@ __all__ = (
     'PinDBException', 'PinDBConfigError', 'UnpinnedWriteException',
     'unpin_all', 'pin', 'get_pinned', 'get_newly_pinned',
     'is_pinned', 'get_replica', 'unpinned_replica',
-    'populate_replicas', 'StrictPinDBRouter', 'GreedyPinDBRouter'
+    'populate_replicas', 'StrictPinDbRouter', 'GreedyPinDbRouter'
 )
 
 _locals = local()
@@ -276,13 +276,13 @@ class PinDbRouterBase(object):
     def allow_syncdb(self, db, model):
         return self.delegate.allow_syncdb(db, model)
 
-class StrictPinDBRouter(PinDbRouterBase):
+class StrictPinDbRouter(PinDbRouterBase):
     def _for_write_with_policy(self, master_alias, model, **hints):
         if not is_pinned(master_alias):
             raise UnpinnedWriteException("Writes to %s aren't allowed because reads aren't pinned to it." % master_alias)
         return master_alias
 
-class GreedyPinDBRouter(PinDbRouterBase):
+class GreedyPinDbRouter(PinDbRouterBase):
     def _for_write_with_policy(self, master_alias, model, **hints):
         pin(master_alias)
         return master_alias
