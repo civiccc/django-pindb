@@ -4,7 +4,7 @@ from django.utils.datastructures import SortedDict
 
 DEBUG = True
 
-TEST_RUNNER = "test_project.test_runner.PinDBTestSuiteRunner"
+TEST_RUNNER = "test_project.test_runner.PinDbTestSuiteRunner"
 
 ROOT_URLCONF = 'test_project.urls'
 
@@ -14,6 +14,5 @@ INSTALLED_APPS = (
 )
 
 MIDDLEWARE_CLASSES = (
-    'pindb.middleware.PinDBMiddleware',
+    'pindb.middleware.PinDbMiddleware',
 )
-

@@ -20,7 +20,7 @@ from test_project.test_app.models import HamModel, EggModel, FrobModel
 
 import pindb
 from pindb import middleware
-from pindb.exceptions import PinDBConfigError, UnpinnedWriteException
+from pindb.exceptions import PinDbConfigError, UnpinnedWriteException
 
 """
 Test writing without pinning
@@ -145,7 +145,7 @@ class MisconfiguredTest(TestCase):
     multi_db = True  # Necessary? Tests pass without.
 
     def test_router_catches_misconfiguration(self):
-        self.assertRaises(PinDBConfigError, ConnectionRouter, settings.DATABASE_ROUTERS)
+        self.assertRaises(PinDbConfigError, ConnectionRouter, settings.DATABASE_ROUTERS)
 
     def test_populate_replicas_catches_misconfiguration(self):
         no_default = {
@@ -169,7 +169,7 @@ class MisconfiguredTest(TestCase):
             'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
         }
 
-        self.assertRaises(PinDBConfigError,
+        self.assertRaises(PinDbConfigError,
             pindb.populate_replicas,
             no_default['MASTER_DATABASES'], 
             {}
@@ -182,7 +182,7 @@ class MisconfiguredTest(TestCase):
             pindb.populate_replicas(
                 default_ok['MASTER_DATABASES'], 
                  {'default': [], 'egg': []})
-        except PinDBConfigError:
+        except PinDbConfigError:
             self.fail("Expected default to be acceptable config.")
 
 

@@ -1,11 +1,11 @@
-class PinDBException(Exception):
+class PinDbException(Exception):
     pass
 
-class PinDBConfigError(PinDBException, ValueError):
+class PinDbConfigError(PinDbException, ValueError):
     pass
 
 
-class UnpinnedWriteException(PinDBException):
+class UnpinnedWriteException(PinDbException):
     pass
 
 

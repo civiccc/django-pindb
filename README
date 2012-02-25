@@ -60,7 +60,7 @@ Installation
 
       DATABASES.update(populate_replicas(MASTER_DATABASES, DATABASE_SETS))
 
-    Add pindb.middleware.PinDBMiddleware to your MIDDLEWARE_CLASSES before any expected database access.
+    Add pindb.middleware.PinDbMiddleware to your MIDDLEWARE_CLASSES before any expected database access.
 
     Throughout your codebase, if you intend to write, declare that as early as possible to avoid inconsistent reads off the related replicas:
 
@@ -80,7 +80,7 @@ Installation
 Further usage notes
 
     Exceptions raised:
-      PinDBConfigError may be caused by:
+      PinDbConfigError may be caused by:
         1) your settings do not include MASTER_DATABASES and DATABASE_SETS
         2) your MASTER_DATABASES do not include a "default" and populate_replicas is called without passing unmanaged_default=True.
         3) you declared an alias in MASTER_DATABASES which does not have a related DATABASE_SETS entry

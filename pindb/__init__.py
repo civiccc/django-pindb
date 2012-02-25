@@ -10,10 +10,10 @@ from warnings import warn
 from django.conf import settings
 from django.utils import importlib
 
-from .exceptions import PinDBException, PinDBConfigError, UnpinnedWriteException
+from .exceptions import PinDbException, PinDbConfigError, UnpinnedWriteException
 
 __all__ = (
-    'PinDBException', 'PinDBConfigError', 'UnpinnedWriteException',
+    'PinDbException', 'PinDbConfigError', 'UnpinnedWriteException',
     'unpin_all', 'pin', 'get_pinned', 'get_newly_pinned',
     'is_pinned', 'get_replica', 'unpinned_replica',
     'populate_replicas', 'StrictPinDbRouter', 'GreedyPinDbRouter'
@@ -195,7 +195,7 @@ def with_masters(aliases):
 # TODO: add logging to aid debugging client code.
 def populate_replicas(masters, replicas_overrides, unmanaged_default=False):
     if not 'default' in masters and not unmanaged_default:
-        raise PinDBConfigError("You must declare a default master")
+        raise PinDbConfigError("You must declare a default master")
 
     ret = {}
     for alias, master_values in masters.items():
@@ -203,7 +203,7 @@ def populate_replicas(masters, replicas_overrides, unmanaged_default=False):
         try:
             replica_overrides = replicas_overrides[alias]
         except KeyError:
-            raise PinDBConfigError("No replica settings found for db set %s" % alias)
+            raise PinDbConfigError("No replica settings found for db set %s" % alias)
         for i, replica_override in enumerate(replica_overrides):
             replica_alias = _make_replica_alias(alias, i)
             replica_settings = master_values.copy()
@@ -230,7 +230,7 @@ class PinDbRouterBase(object):
     def __init__(self):
         if (not hasattr(settings, 'MASTER_DATABASES') or
             not hasattr(settings, 'DATABASE_SETS')):
-            raise PinDBConfigError("You must define MASTER_DATABASES and DATABASE_SETS settings.")
+            raise PinDbConfigError("You must define MASTER_DATABASES and DATABASE_SETS settings.")
 
         # stash the # to chose from to reduce per-call overhead in the routing.
         for alias, master_values in settings.MASTER_DATABASES.items():

@@ -35,7 +35,7 @@ def _get_response_pins(request_pinned_until):
 
     return pinned_until
 
-class PinDBMiddleware(object):
+class PinDbMiddleware(object):
     """Middleware to support the persisting pinning between requests after a write.
 
     Attaches a cookie to browser which has just written, causing subsequent
