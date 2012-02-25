@@ -133,8 +133,15 @@ class PinDBTestCase(TestCase):
         self.shim_runner.teardown_databases(self.old_config)
 
 def populate_databases(settings_dict):
-    # work around a bug in django - it doesn't properly create multiple
-    #  in-memory sqlite dbs  So we'll go disk-based.
+    """Given a dict of various DB-related settings (DATABASES, MASTER_DATABASES, DATABASE_SETS), finalize all the settings into the DATABASES item of the dict.
+
+    Also, turn the SQLite DBs we're using for testing into disk-based ones
+    rather than memory-based ones, and give each a unique FS path, because
+    Django buggily fails to come up with unique identifying tuples for multiple
+    memory-based SQLites. Give each one a TEST_NAME, because otherwise,
+    django.db.backends.sqlite3.creation reverts to ":memory:".
+
+    """
     db_dir = tempfile.mkdtemp()
     if 'DATABASES' not in settings_dict:
         settings_dict['DATABASES'] = {}
@@ -147,7 +154,7 @@ def populate_databases(settings_dict):
         replicas
     )
     for alias, db in settings_dict['DATABASES'].items():
-        db['NAME'] = os.path.join(db_dir, "test_%s" % alias)
+        db['NAME'] = db['TEST_NAME'] = os.path.join(db_dir, "test_%s" % alias)
     from pprint import pprint 
     pprint(settings_dict['DATABASES'])
 
@@ -191,7 +198,7 @@ class MisconfiguredTest(PinDBTestCase):
             {}
         )
 
-        default_ok = no_default.copy()
+        default_ok = no_default.copy()  # Note: not deep, but doesn't matter
         default_ok['MASTER_DATABASES']['default'] = default_ok['MASTER_DATABASES']['ham']
         del default_ok['MASTER_DATABASES']['ham']
         try:
@@ -477,46 +484,65 @@ delegate_greedy_router_settings = {
     },
     'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
 }
-
-populate_databases(delegate_greedy_router_settings)
-
-# for the GreedyMiddlewareTest testcase later.
 greedy_middleware_settings = deepcopy(delegate_greedy_router_settings)
-populate_databases(greedy_middleware_settings)
+populate_databases(delegate_greedy_router_settings)
+populate_databases(greedy_middleware_settings)  # for GreedyMiddlewareTest
+delegate_greedy_router_settings = delegate_greedy_router_settings
 
 @override_settings(**delegate_greedy_router_settings)
 class FullyConfiguredGreedyTest(PinDBTestCase):  # I think this is the :memory: thing.
+    """Tests for a ``GreedyPinDbRouter``, complete with delegate router"""
+
     def test_router(self):
-        self.assertEqual(
-            dj_db.router.db_for_read(HamModel), "default"
-        )
+        # Ham should go in the default DB:
+        self.assertEqual(dj_db.router.db_for_read(HamModel), "default")
+        # Reading one shouldn't cause it to pin:
         self.assertEqual(pindb.is_pinned("default"), False)
-        self.assertEqual(
-            dj_db.router.db_for_write(HamModel), "default"
-        )
+        # The delegate router has no opinion on Hams, so they should write to
+        # the default DB:
+        self.assertEqual(dj_db.router.db_for_write(HamModel), "default")
+        # The above should cause it to pin (even though default has no slaves
+        # in this case):
         self.assertEqual(pindb.is_pinned("default"), True)
 
-        self.assertTrue(
-            dj_db.router.db_for_read(EggModel) in ["egg-0", "egg-1"]
-        )
+        # Eggs are stored in a replicated DB set, so we should read from a replica:
+        self.assertTrue(dj_db.router.db_for_read(EggModel) in ["egg-0", "egg-1"])
+        # Reading shouldn't pin:
         self.assertEqual(pindb.is_pinned("egg"), False)
-        self.assertEqual(
-            dj_db.router.db_for_write(EggModel), "egg"
-        )
+        # Writes should go to master:
+        self.assertEqual(dj_db.router.db_for_write(EggModel), "egg")
+        # And should cause a pin:
         self.assertEqual(pindb.is_pinned("egg"), True)
-
         pindb.unpin_all()
 
+        # Making a Ham should pin to the master of the default set...
         ham1 = HamModel.objects.create()
         self.assertEqual(pindb.is_pinned("default"), True)
+        # ...but not the egg set:
         self.assertEqual(pindb.is_pinned("egg"), False)
+
+        # Making an Egg should pin the egg set as well:
         egg1 = EggModel.objects.create()
         self.assertEqual(pindb.is_pinned("egg"), True)
         pindb.unpin_all()
+
         ham1a = HamModel.objects.get(pk=ham1.pk)
-        egg1a = EggModel.objects.get(pk=egg1.pk)
+        egg1a = EggModel.objects.get(pk=egg1.pk)  # bewm
 
-
+#     def test_misdirected_save(self):
+#         """Test that saves route to the right DB after a fetch.
+#         
+#         At some point in production, we had an error that looked like fetching a model instance (from a slave) and then saving it failed, because it was trying to to write to the slave.
+#         
+#         """
+#         # Set up the pre-existing model:
+#         egg = EggModel.objects.create()
+#         egg_id = egg.id
+#         pindb.unpin_all()
+#         
+#         egg = EggModel.objects.get(id=egg_id)
+#         egg.save()  # Trace this. Find the db_for_write() call. Call it and assert it's returning the right thing.
+        
 
 
 @override_settings(**greedy_middleware_settings)

@@ -1,6 +1,7 @@
 from .test_app.models import HamModel, EggModel
 
 class HamAndEggRouter(object):
+    """Read and write Eggs to the 'egg' DB. Ham goes in the default DB."""
     def db_for_read(self, model, **hints):        
         if model is EggModel:
             return "egg"

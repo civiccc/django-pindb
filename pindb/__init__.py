@@ -31,7 +31,7 @@ def unpin_all():
     _locals.newly_pinned_set = set()
     _locals.chosen_replicas = {}
 
-DB_SET_SIZES = {}
+DB_SET_SIZES = {}  # How many slaves each DB set has
 def _init_state():
     global DB_SET_SIZES
     DB_SET_SIZES = {}
