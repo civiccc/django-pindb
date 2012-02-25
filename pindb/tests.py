@@ -1,10 +1,10 @@
-import tempfile, os
-from mock import patch
 from copy import deepcopy
+import os
+import tempfile
 
 from django.http import HttpRequest, HttpResponse
 from django import db as dj_db
-from django.db.backends.dummy.base import DatabaseWrapper as DummyDatabaseWrapper 
+from django.db.backends.dummy.base import DatabaseWrapper as DummyDatabaseWrapper
 from django.db.utils import ConnectionHandler, ConnectionRouter
 from django.conf import settings
 from django.core.management import call_command
@@ -12,16 +12,15 @@ from django.test import TestCase
 from django.test.simple import DjangoTestSuiteRunner
 from django.utils import importlib
 
-# a backport from django 1.4
-from override_settings import override_settings
 import anyjson
+from mock import patch
+from override_settings import override_settings  # a backport from Django 1.4
 
 from test_project.test_app.models import HamModel, EggModel, FrobModel
 
 import pindb
 from pindb import middleware
 from pindb.exceptions import PinDBConfigError, UnpinnedWriteException
-
 
 """
 Test writing without pinning
@@ -38,9 +37,9 @@ Test web pinning context:
     test cookie with bad pin name (changed alias, user hacking)
     timeout
     persistence of different timestamps
-    test wipes out dirty pins on request start 
+    test wipes out dirty pins on request start
 Test task context:
-    test wipes out dirty pins on request start 
+    test wipes out dirty pins on request start
     test write without pinning
     test writing after pinning
 """
@@ -55,49 +54,18 @@ class InitTestCase(TestCase):
         pindb._init_state()
         self.assertEqual({}, pindb.DB_SET_SIZES)
 
+
 # TODO: add coverage, COVERAGE_MODULE_EXCLUDES
-class PinDBTestCase(TestCase):
+class PinDbTestCase(TestCase):
     multi_db = True
 
-    def _fixture_setup(self):
-        # nope, we have no fixtures, and don't want to 
-        #  insist on a db existing at this point because setUp will make them.
-        pass 
-
-    def _post_teardown(self):
-        """ Performs any post-test things. This includes:
-
-            * Putting back the original ROOT_URLCONF if it was changed.
-            * Force closing the connection, so that the next test gets
-              a clean cursor.
-        """
-        self._fixture_teardown()
-        self._urlconf_teardown()
-        # Some DB cursors include SQL statements as part of cursor
-        # creation. If you have a test that does rollback, the effect
-        # of these statements is lost, which can effect the operation
-        # of tests (e.g., losing a timezone setting causing objects to
-        # be created with the wrong time).
-        # To make sure this doesn't happen, get a clean connection at the
-        # start of every test.
-        for connection in dj_db.connections.all():
-            connection.close()
-
-    def _fixture_teardown(self):
-        # patching to clear out models created
-        for db in dj_db.connections:
-            # skip dummy backends, which only show up when 
-            #  we haven't config'd, and which can't be flushed.
-            if isinstance(dj_db.connections[db], DummyDatabaseWrapper):
-                continue
-            call_command('flush', verbosity=0, interactive=False, database=db)
-
-    def setUp(self):
+    def _pre_setup(self):
+        """Munge DB infrastructure before the superclass gets a chance to set up the DBs."""
         # clear all module state
         pindb._init_state()
 
         # patch up the db system to use the effective router settings (see override_settings)
-        # we can't just reconstruct objects here because 
+        # we can't just reconstruct objects here because
         #   lots of places do from foo import baz, so they have
         #   a local reference to an object we can't replace.
         # so reach in and (gulp) mash the object's state.
@@ -112,17 +80,27 @@ class PinDBTestCase(TestCase):
             return getattr(mod, class_name)()
 
         dj_db.router.routers = [
-            make_router(import_path) for import_path in 
+            make_router(import_path) for import_path in
             settings.DATABASE_ROUTERS]
 
         dj_db.connection = dj_db.connections[dj_db.DEFAULT_DB_ALIAS]
         dj_db.backend = dj_db.load_backend(dj_db.connection.settings_dict['ENGINE'])
 
         self.shim_runner = DjangoTestSuiteRunner()
-
         self.setup_databases()
-    
-    def tearDown(self):
+
+        super(PinDbTestCase, self)._pre_setup()
+
+    def _post_teardown(self):
+        """Delete the databases after the superclass' method has closed the connections.
+
+        We must do the DB deletion in post-teardown, because that's when the
+        superclass closes its connection, which inadvertantly re-creates the
+        sqlite file if we had previously tried to delete it (like in a plain
+        old tearDown method).
+
+        """
+        super(PinDbTestCase, self)._post_teardown()
         pindb.unpin_all()
         self.teardown_databases(self.old_config)
 
@@ -131,6 +109,7 @@ class PinDBTestCase(TestCase):
 
     def teardown_databases(self, old_config, **kwargs):
         self.shim_runner.teardown_databases(self.old_config)
+
 
 def populate_databases(settings_dict):
     """Given a dict of various DB-related settings (DATABASES, MASTER_DATABASES, DATABASE_SETS), finalize all the settings into the DATABASES item of the dict.
@@ -146,7 +125,7 @@ def populate_databases(settings_dict):
     if 'DATABASES' not in settings_dict:
         settings_dict['DATABASES'] = {}
     replicas =  pindb.populate_replicas(
-        settings_dict['MASTER_DATABASES'], 
+        settings_dict['MASTER_DATABASES'],
         settings_dict['DATABASE_SETS']
     )
 
@@ -155,23 +134,19 @@ def populate_databases(settings_dict):
     )
     for alias, db in settings_dict['DATABASES'].items():
         db['NAME'] = db['TEST_NAME'] = os.path.join(db_dir, "test_%s" % alias)
-    from pprint import pprint 
-    pprint(settings_dict['DATABASES'])
+
 
 misconfigured_settings = {
     'DATABASE_ROUTERS': ['pindb.StrictPinDbRouter'],
-} #because MASTER_DATAABASES and DATABASE_SETS is required.
+}  # because MASTER_DATAABASES and DATABASE_SETS is required.
 
 @override_settings(**misconfigured_settings)
-class MisconfiguredTest(PinDBTestCase):
-    def setUp(self):
-        pass
-    def tearDown(self):
-        pass
+class MisconfiguredTest(TestCase):
+    multi_db = True  # Necessary? Tests pass without.
 
-    def test_router_catches_misconfiguration(self):                
+    def test_router_catches_misconfiguration(self):
         self.assertRaises(PinDBConfigError, ConnectionRouter, settings.DATABASE_ROUTERS)
-    
+
     def test_populate_replicas_catches_misconfiguration(self):
         no_default = {
             'DATABASE_ROUTERS': ['pindb.StrictPinDbRouter'],
@@ -182,12 +157,14 @@ class MisconfiguredTest(PinDBTestCase):
                 }),
                 ('egg', {
                     'NAME': ':memory:',
-                    'ENGINE': 'django.db.backends.sqlite3',        
+                    'ENGINE': 'django.db.backends.sqlite3',
                 })
             ]),
             'DATABASE_SETS': {
                 'ham': [],
-                'egg': [{}, {}] # normally would have overrides, but lots of sqlites in memory are happy together.
+                # This normally would have overrides, but lots of sqlites in
+                # memory are happy together:
+                'egg': [{}, {}]
             },
             'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
         }
@@ -208,6 +185,7 @@ class MisconfiguredTest(PinDBTestCase):
         except PinDBConfigError:
             self.fail("Expected default to be acceptable config.")
 
+
 no_delegate_router_settings = {
     'DATABASE_ROUTERS': ['pindb.StrictPinDbRouter'],
     'MASTER_DATABASES': {
@@ -221,7 +199,9 @@ no_delegate_router_settings = {
         }
     },
     'DATABASE_SETS': {
-        'default': [{}, {}], # normally would have overrides, but lots of sqlites in memory are happy together.
+        # This normally would have overrides, but lots of sqlites in memory are
+        # happy together:
+        'default': [{}, {}],
         'egg': [] #no replicas
     },
     'PINDB_DELEGATE_ROUTERS': None
@@ -229,7 +209,7 @@ no_delegate_router_settings = {
 populate_databases(no_delegate_router_settings)
 
 @override_settings(**no_delegate_router_settings)
-class NoDelegateTest(PinDBTestCase):
+class NoDelegateTest(PinDbTestCase):
     def test_internals(self):
         self.assertEqual(pindb.DB_SET_SIZES['default'], 1)
         self.assertEqual(pindb.DB_SET_SIZES['egg'], -1)
@@ -335,6 +315,7 @@ class NoDelegateTest(PinDBTestCase):
         self.assertTrue(dj_db.router.allow_syncdb("default", HamModel))
         self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
 
+
 delegate_strict_router_settings = {
     'DATABASE_ROUTERS': ['pindb.StrictPinDbRouter'],
     'DATABASES': {
@@ -354,7 +335,9 @@ delegate_strict_router_settings = {
         }
     },
     'DATABASE_SETS': {
-        'default': [], # normally would have overrides, but lots of sqlites in memory are happy together.
+        # This normally would have overrides, but lots of sqlites in memory are
+        # happy together:
+        'default': [],
         'egg': [{}, {}]
     },
     'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
@@ -362,7 +345,7 @@ delegate_strict_router_settings = {
 populate_databases(delegate_strict_router_settings)
 
 @override_settings(**delegate_strict_router_settings)
-class FullyConfiguredStrictTest(PinDBTestCase):
+class FullyConfiguredStrictTest(PinDbTestCase):
     def test_internals(self):
         self.assertEqual(pindb.DB_SET_SIZES['default'], -1)
         self.assertEqual(pindb.DB_SET_SIZES['egg'], 1)
@@ -460,6 +443,7 @@ class FullyConfiguredStrictTest(PinDBTestCase):
         self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
         self.assertEqual(dj_db.router.db_for_read(FrobModel), "default")
 
+
 delegate_greedy_router_settings = {
     'DATABASE_ROUTERS': ['pindb.GreedyPinDbRouter'],
     'DATABASES': {
@@ -479,7 +463,9 @@ delegate_greedy_router_settings = {
         }
     },
     'DATABASE_SETS': {
-        'default': [], # normally would have overrides, but lots of sqlites in memory are happy together.
+        # This normally would have overrides, but lots of sqlites in memory are
+        # happy together:
+        'default': [],
         'egg': [{}, {}]
     },
     'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
@@ -487,10 +473,9 @@ delegate_greedy_router_settings = {
 greedy_middleware_settings = deepcopy(delegate_greedy_router_settings)
 populate_databases(delegate_greedy_router_settings)
 populate_databases(greedy_middleware_settings)  # for GreedyMiddlewareTest
-delegate_greedy_router_settings = delegate_greedy_router_settings
 
 @override_settings(**delegate_greedy_router_settings)
-class FullyConfiguredGreedyTest(PinDBTestCase):  # I think this is the :memory: thing.
+class FullyConfiguredGreedyTest(PinDbTestCase):
     """Tests for a ``GreedyPinDbRouter``, complete with delegate router"""
 
     def test_router(self):
@@ -527,7 +512,7 @@ class FullyConfiguredGreedyTest(PinDBTestCase):  # I think this is the :memory: 
         pindb.unpin_all()
 
         ham1a = HamModel.objects.get(pk=ham1.pk)
-        egg1a = EggModel.objects.get(pk=egg1.pk)  # bewm
+        egg1a = EggModel.objects.get(pk=egg1.pk)  # no longer bewm
 
 #     def test_misdirected_save(self):
 #         """Test that saves route to the right DB after a fetch.
@@ -542,11 +527,10 @@ class FullyConfiguredGreedyTest(PinDBTestCase):  # I think this is the :memory: 
 #         
 #         egg = EggModel.objects.get(id=egg_id)
 #         egg.save()  # Trace this. Find the db_for_write() call. Call it and assert it's returning the right thing.
-        
 
 
 @override_settings(**greedy_middleware_settings)
-class GreedyMiddlewareTest(PinDBTestCase):
+class GreedyMiddlewareTest(PinDbTestCase):
     def _get_response_cookie(self, url):
         response = self.client.post(url)
         self.assertTrue(middleware.PINNING_COOKIE in response.cookies)
