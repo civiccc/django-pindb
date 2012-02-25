@@ -15,7 +15,7 @@ PINNING_SECONDS = int(getattr(settings, 'PINDB_PINNING_SECONDS', 15))
 
 def _get_request_pins(cookie_value):
     ret = []
-            
+
     now_time = time()
     pinned_untils = anyjson.loads(cookie_value)
 
@@ -32,7 +32,7 @@ def _get_response_pins(request_pinned_until):
     newly_pinned_set = get_newly_pinned()
     for pinned in newly_pinned_set:
         pinned_until[pinned] = time() + PINNING_SECONDS
-    
+
     return pinned_until
 
 class PinDBMiddleware(object):
@@ -68,8 +68,8 @@ class PinDBMiddleware(object):
         # don't set the cookie if there are no effective pins.
         if not to_persist:
             return response
-    
-        response.set_cookie(PINNING_COOKIE, 
+
+        response.set_cookie(PINNING_COOKIE,
             value=anyjson.dumps(to_persist),
             max_age=PINNING_SECONDS)
 

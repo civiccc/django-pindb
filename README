@@ -30,7 +30,7 @@ Installation
 
     GreedyPinDbRouter will pin to a master as soon as a write occurs.  The advantage is that most of your code will just work.  The disadvantage is that you will use the read replicas less than possible.
 
-    If you need to manage more than 1 master/replica set, add PINDB_DELEGATE_ROUTERS for pindb to defer to on DB set selection
+    If you need to manage more than 1 master/replica set, add PINDB_DELEGATE_ROUTERS for pindb to defer to on DB set selection.
 
     Define MASTER_DATABASES, same schema as DATABASES.
 
@@ -66,7 +66,7 @@ Installation
 
       pin("default")
 
-    That will cause all future reads to use the master and allow writes to occur.
+    That will cause all future reads to use the master and will allow writes to occur.
 
     To use under celery, hook celery.signals.task_postrun to pindb.unpin_all:
 
@@ -109,7 +109,7 @@ like to read from replicas as much as possible and we would like all
 writes to go to the master of the set.  But we would also like reads
 to be consistent to writers.
 
-      We would like this to be possible for web request cycles, but also
+      We would like this to be possible for web request cycles but also
 for units of work like tasks or shell scripts.  So we call this unit
 of work the "pinning context".
 
@@ -193,9 +193,10 @@ intend to do writes to *before you read* from a replica.
        If you would like to explicitly use a replica, pindb.get_replica()
 will return a replica alias.
 
-       Pinning a set lasts the duration of a pinning context (once pinned, you can
-not unpin a DB).  If you want to write to a DB without pinning the container, 
-you can use queryset's .using method, which bypasses db_for_write.  Careful with this axe.
+       Pinning a set lasts the duration of a pinning context (once pinned, you
+       cannot unpin a DB).  If you want to write to a DB without pinning the
+       container, you can use queryset's .using method, which bypasses
+       db_for_write.  Careful with this axe.
 
        To declare a pin:
 
