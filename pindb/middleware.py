@@ -6,14 +6,18 @@ from . import pin, get_newly_pinned, unpin_all
 
 
 # The name of the cookie that directs a request's reads to the master DB
-PINNING_COOKIE = getattr(settings, 'PINDB_PINNING_COOKIE',
-                         'pindb_pinned_set')
+PINNING_COOKIE = getattr(settings, 'PINDB_PINNING_COOKIE', 'pindb_pinned_set')
 
 # The number of seconds for which reads are directed to the master DB after a
 # write
 PINNING_SECONDS = int(getattr(settings, 'PINDB_PINNING_SECONDS', 15))
 
 def _get_request_pins(cookie_value):
+    """Extract the persistent pinnings from a cookie.
+
+    Return an iterable of (DB alias, time pinned until) tuples.
+
+    """
     ret = []
 
     now_time = time()
@@ -43,12 +47,14 @@ class PinDbMiddleware(object):
     to be handled by the master.
 
     When the cookie is detected on a request, related DBs are pinned.
+
     """
     def process_request(self, request):
         """Set the thread's pinning flag according to the presence of the
         incoming cookie."""
 
-        # Make a clean slate
+        # Make a clean slate. This is also necessary to ensure the threadlocal
+        # attrs of our locals() object exist.
         unpin_all()
 
         request._pinned_until = {}
@@ -56,10 +62,10 @@ class PinDbMiddleware(object):
         if not PINNING_COOKIE in request.COOKIES:
             return
 
-        for pinned, until in _get_request_pins(request.COOKIES[PINNING_COOKIE]):
+        for alias, until in _get_request_pins(request.COOKIES[PINNING_COOKIE]):
             # keep track of existing end times for the return trip.
-            request._pinned_until[pinned] = until
-            pin(pinned, count_as_new=False)
+            request._pinned_until[alias] = until
+            pin(alias, count_as_new=False)
 
     def process_response(self, request, response):
         pinned_until = _get_response_pins(request._pinned_until)
@@ -69,6 +75,7 @@ class PinDbMiddleware(object):
         if not to_persist:
             return response
 
+        # TODO: Use Django 1.4's signed cookies.
         response.set_cookie(PINNING_COOKIE,
             value=anyjson.dumps(to_persist),
             max_age=PINNING_SECONDS)

@@ -21,23 +21,24 @@ __all__ = (
 
 _locals = local()
 
-# number of replicas for each db set, loaded when the Router is constructed;
-# zero-based to ease using random.randint
-
 def unpin_all():
-    # the authoritative set of pinned alias.
+    """Clear the new and old pinnings and the chosen replicas."""
+    # the authoritative set of pinned aliases:
     _locals.pinned_set = set()
-    # the newly-pinned ones for advising the pinned context (i.e. for persistence.)
+    # the newly-pinned ones for advising the pinned context (i.e. for persistence):
     _locals.newly_pinned_set = set()
-    _locals.chosen_replicas = {}
+    # replica choices already made during this pinning context:
+    _locals.chosen_replicas = {}  # {master alias: replica alias}
 
-DB_SET_SIZES = {}  # How many slaves each DB set has
+# Number of replicas for each DB set, loaded when the Router is constructed;
+# zero-based to ease using random.randint. If a set as 3 replicas, there will
+# be a 2 here.
+DB_SET_SIZES = {}  # How many slaves each DB set has - 1
 def _init_state():
     global DB_SET_SIZES
     DB_SET_SIZES = {}
 
     unpin_all()
-    # FIXME: Init on every req, or move init-per-process stuff off locals.
 
 # initialize state
 _init_state()
@@ -71,11 +72,13 @@ REPLICA_TEMPLATE = "%s-%s"
 def _make_replica_alias(master_alias, replica_num):
     return REPLICA_TEMPLATE % (master_alias, replica_num)
 
-
-# TODO: add an option for reading from the repliac once one is selected in a given pinning context;
-#  This would allow for replicas in a given db set having different amounts of lag.
-#  Otherwise we could still get inconsistent reads when round-robining among replicas.
 def get_replica(master_alias):
+    """Return an arbitrary replica of a given master.
+
+    If one was already chosen during this pinning context, keep returning the
+    same one.
+
+    """
     try:
         effective_size = DB_SET_SIZES[master_alias]
     except KeyError:
@@ -144,7 +147,6 @@ def with_replicas(aliases):
         return wrapper
     return make_wrapper
 
-
 class master(object):
     """Context manager for temporarily writing to a master DB
 
@@ -195,7 +197,7 @@ def with_masters(aliases):
 # TODO: add logging to aid debugging client code.
 def populate_replicas(masters, replicas_overrides, unmanaged_default=False):
     if not 'default' in masters and not unmanaged_default:
-        raise PinDbConfigError("You must declare a default master")
+        raise PinDbConfigError("You must declare a default master.")
 
     ret = {}
     for alias, master_values in masters.items():
@@ -203,7 +205,7 @@ def populate_replicas(masters, replicas_overrides, unmanaged_default=False):
         try:
             replica_overrides = replicas_overrides[alias]
         except KeyError:
-            raise PinDbConfigError("No replica settings found for db set %s" % alias)
+            raise PinDbConfigError("No replica settings found for DB set %s" % alias)
         for i, replica_override in enumerate(replica_overrides):
             replica_alias = _make_replica_alias(alias, i)
             replica_settings = master_values.copy()
@@ -253,7 +255,7 @@ class PinDbRouterBase(object):
         if master_alias is None:
             master_alias = "default"
 
-        # allow anything unmanaged by the db set system to work unhindered.
+        # allow anything unmanaged by the DB set system to work unhindered.
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias
 
@@ -265,7 +267,7 @@ class PinDbRouterBase(object):
         master_alias = self.delegate.db_for_write(model, **hints)
         if master_alias is None:
             master_alias = "default"
-        # allow anything unmanaged by the db set system to work unhindered.
+        # allow anything unmanaged by the DB set system to work unhindered.
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias
         return self._for_write_with_policy(master_alias, model, **hints)
@@ -286,4 +288,3 @@ class GreedyPinDbRouter(PinDbRouterBase):
     def _for_write_with_policy(self, master_alias, model, **hints):
         pin(master_alias)
         return master_alias
-
