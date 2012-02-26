@@ -15,7 +15,8 @@ PINNING_SECONDS = int(getattr(settings, 'PINDB_PINNING_SECONDS', 15))
 def _get_request_pins(cookie_value):
     """Extract the persistent pinnings from a cookie.
 
-    Return an iterable of (DB alias, time pinned until) tuples.
+    Return an iterable of (DB alias, time pinned until) tuples. Any expired
+    pinnings are omitted.
 
     """
     ret = []
@@ -28,19 +29,21 @@ def _get_request_pins(cookie_value):
         # TODO: Maybe add some logging.
         pinned_untils = []
 
-    for pinned, until in pinned_untils:
-        if not pinned in settings.MASTER_DATABASES:
+    for alias, until in pinned_untils:
+        if not alias in settings.MASTER_DATABASES:
             continue
         if now_time < until:
-            ret.append((pinned, until))
+            ret.append((alias, until))
     return ret
 
 def _get_response_pins(request_pinned_until):
+    """Return the union of the preexisting pinned set--socked away on the request--with any newly set pins."""
     pinned_until = request_pinned_until.copy()
 
-    newly_pinned_set = get_newly_pinned()
-    for pinned in newly_pinned_set:
-        pinned_until[pinned] = time() + PINNING_SECONDS
+    # Update (a copy of) the previous persistent pinned set with any new pinnings:
+    new_expiration = time() + PINNING_SECONDS
+    for alias in get_newly_pinned():
+        pinned_until[alias] = new_expiration
 
     return pinned_until
 
@@ -55,9 +58,7 @@ class PinDbMiddleware(object):
 
     """
     def process_request(self, request):
-        """Set the thread's pinning flag according to the presence of the
-        incoming cookie."""
-
+        """Pin DB sets according to data in an incoming cookie."""
         # Make a clean slate. This is also necessary to ensure the threadlocal
         # attrs of our locals() object exist.
         unpin_all()
@@ -68,21 +69,20 @@ class PinDbMiddleware(object):
             return
 
         for alias, until in _get_request_pins(request.COOKIES[PINNING_COOKIE]):
-            # keep track of existing end times for the return trip.
+            # Keep track of existing end times for the return trip.
             request._pinned_until[alias] = until
             pin(alias, count_as_new=False)
 
     def process_response(self, request, response):
+        """Set outgoing cookie to persist preexisting and new pinnings."""
         pinned_until = _get_response_pins(request._pinned_until)
 
         to_persist = list(pinned_until.items())
-        # don't set the cookie if there are no effective pins.
-        if not to_persist:
-            return response
-
-        # TODO: Use Django 1.4's signed cookies.
-        response.set_cookie(PINNING_COOKIE,
-            value=anyjson.dumps(to_persist),
-            max_age=PINNING_SECONDS)
+        # Don't set the cookie if there are no effective pins.
+        if to_persist:
+            # TODO: Use Django 1.4's signed cookies.
+            response.set_cookie(PINNING_COOKIE,
+                value=anyjson.dumps(to_persist),
+                max_age=PINNING_SECONDS)
 
         return response
