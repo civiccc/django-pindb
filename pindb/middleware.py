@@ -21,7 +21,12 @@ def _get_request_pins(cookie_value):
     ret = []
 
     now_time = time()
-    pinned_untils = anyjson.loads(cookie_value)
+    try:
+        pinned_untils = anyjson.loads(cookie_value)
+    except ValueError:
+        # If the cookie was corrupted, revert to not pinning anything:
+        # TODO: Maybe add some logging.
+        pinned_untils = []
 
     for pinned, until in pinned_untils:
         if not pinned in settings.MASTER_DATABASES:

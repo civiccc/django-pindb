@@ -563,3 +563,6 @@ class GreedyMiddlewareTest(PinDbTestCase):
             ["default", 1.0 + middleware.PINNING_SECONDS],
             ["egg", 2.0 + middleware.PINNING_SECONDS],
         ])
+
+    def test_bad_cookie(self):
+        self.assertEquals(middleware._get_request_pins('bad thing'), [])
