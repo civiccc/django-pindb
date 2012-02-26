@@ -544,24 +544,24 @@ class GreedyMiddlewareTest(PinDbTestCase):
     
     @patch('pindb.middleware.time')
     def test_write(self, mock_time):
-        mock_time.return_value = 1.0
+        mock_time.return_value = 1
         cookie = self._get_response_cookie('/test_app/write/')
-        self.assertEqual(cookie, [["default", 1.0 + middleware.PINNING_SECONDS]])
-        mock_time.return_value = 2.0
+        self.assertEqual(cookie, [["default", 1 + middleware.PINNING_SECONDS]])
+        mock_time.return_value = 2
         cookie = self._get_response_cookie('/test_app/write/')
-        self.assertEqual(cookie, [["default", 2.0 + middleware.PINNING_SECONDS]])
+        self.assertEqual(cookie, [["default", 2 + middleware.PINNING_SECONDS]])
 
     @patch('pindb.middleware.time')
     def test_write_with_existing(self, mock_time):
-        mock_time.return_value = 1.0
+        mock_time.return_value = 1
         cookie = self._get_response_cookie('/test_app/write/')
-        self.assertEqual(cookie, [["default", 1.0 + middleware.PINNING_SECONDS]])
-        mock_time.return_value = 2.0
+        self.assertEqual(cookie, [["default", 1 + middleware.PINNING_SECONDS]])
+        mock_time.return_value = 2
 
         cookie = self._get_response_cookie('/test_app/create_one_pin/')
         self.assertEqual(cookie, [
-            ["default", 1.0 + middleware.PINNING_SECONDS],
-            ["egg", 2.0 + middleware.PINNING_SECONDS],
+            ["default", 1 + middleware.PINNING_SECONDS],
+            ["egg", 2 + middleware.PINNING_SECONDS],
         ])
 
     def test_bad_cookie(self):

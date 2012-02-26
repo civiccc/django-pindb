@@ -1,6 +1,9 @@
+from math import ceil
 from time import time
-import anyjson
+
 from django.conf import settings
+
+import anyjson
 
 from . import pin, get_newly_pinned, unpin_all
 
@@ -41,7 +44,7 @@ def _get_response_pins(request_pinned_until):
     pinned_until = request_pinned_until.copy()
 
     # Update (a copy of) the previous persistent pinned set with any new pinnings:
-    new_expiration = time() + PINNING_SECONDS
+    new_expiration = int(ceil(time() + PINNING_SECONDS))
     for alias in get_newly_pinned():
         pinned_until[alias] = new_expiration
 
