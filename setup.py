@@ -48,7 +48,7 @@ class RunTests(Command):
 
 
 if os.path.exists("README.rst"):
-    long_description = codecs.open("README", "r", "utf-8").read()
+    long_description = codecs.open("README.rst", "r", "utf-8").read()
 else:
     long_description = "See https://github.com/votizen/django-pindb"
 
