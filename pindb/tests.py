@@ -171,7 +171,7 @@ class MisconfiguredTest(TestCase):
 
         self.assertRaises(PinDbConfigError,
             pindb.populate_replicas,
-            no_default['MASTER_DATABASES'], 
+            no_default['MASTER_DATABASES'],
             {}
         )
 
@@ -180,7 +180,7 @@ class MisconfiguredTest(TestCase):
         del default_ok['MASTER_DATABASES']['ham']
         try:
             pindb.populate_replicas(
-                default_ok['MASTER_DATABASES'], 
+                default_ok['MASTER_DATABASES'],
                  {'default': [], 'egg': []})
         except PinDbConfigError:
             self.fail("Expected default to be acceptable config.")
@@ -195,7 +195,7 @@ no_delegate_router_settings = {
         },
         'egg': {
             'NAME': ':memory:',
-            'ENGINE': 'django.db.backends.sqlite3',        
+            'ENGINE': 'django.db.backends.sqlite3',
         }
     },
     'DATABASE_SETS': {
@@ -310,7 +310,7 @@ class NoDelegateTest(PinDbTestCase):
         ham1 = HamModel.objects.create()
         ham2 = HamModel.objects.create()
         # If no delegate router is given, all DB goes to default.
-        egg = EggModel.objects.create() 
+        egg = EggModel.objects.create()
         self.assertTrue(dj_db.router.allow_relation(ham1, ham2))
         self.assertTrue(dj_db.router.allow_syncdb("default", HamModel))
         self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
@@ -331,7 +331,7 @@ delegate_strict_router_settings = {
         },
         'egg': {
             'NAME': ':memory:',
-            'ENGINE': 'django.db.backends.sqlite3',        
+            'ENGINE': 'django.db.backends.sqlite3',
         }
     },
     'DATABASE_SETS': {
@@ -459,7 +459,7 @@ delegate_greedy_router_settings = {
         },
         'egg': {
             'NAME': ':memory:',
-            'ENGINE': 'django.db.backends.sqlite3',        
+            'ENGINE': 'django.db.backends.sqlite3',
         }
     },
     'DATABASE_SETS': {
@@ -514,19 +514,35 @@ class FullyConfiguredGreedyTest(PinDbTestCase):
         ham1a = HamModel.objects.get(pk=ham1.pk)
         egg1a = EggModel.objects.get(pk=egg1.pk)  # no longer bewm
 
-#     def test_misdirected_save(self):
-#         """Test that saves route to the right DB after a fetch.
-#         
-#         At some point in production, we had an error that looked like fetching a model instance (from a slave) and then saving it failed, because it was trying to to write to the slave.
-#         
-#         """
-#         # Set up the pre-existing model:
-#         egg = EggModel.objects.create()
-#         egg_id = egg.id
-#         pindb.unpin_all()
-#         
-#         egg = EggModel.objects.get(id=egg_id)
-#         egg.save()  # Trace this. Find the db_for_write() call. Call it and assert it's returning the right thing.
+    def test_new_pins_persist(self):
+        """If a greedy router scoops up a new pinning, make sure it counts as new.
+
+        If it doesn't middleware and such will fail to persist it.
+
+        """
+        # Unprovoked by a write, it returns a replica:
+        self.assertTrue(dj_db.router.db_for_read(EggModel) in ["egg-0", "egg-1"])
+        # Then we write:
+        self.assertEqual(dj_db.router.db_for_write(EggModel), "egg")
+        # And then it should be in the newly pinned set:
+        self.assertTrue(pindb.is_newly_pinned("egg"))
+
+    def test_misdirected_save(self):
+        """Test that saves route to the right DB after a fetch.
+
+        At some point in production, we had an error that looked like fetching
+        a model instance (from a slave) and then saving it failed, because it
+        was trying to to write to the slave. It sure doesn't seem to to that
+        [anymore].
+
+        """
+        # Set up the pre-existing model instance:
+        egg = EggModel.objects.create()
+        egg_id = egg.id
+        pindb.unpin_all()
+
+        egg = EggModel.objects.get(id=egg_id)
+        self.assertEqual(dj_db.router.db_for_write(EggModel), "egg")
 
 
 @override_settings(**greedy_middleware_settings)
@@ -541,7 +557,7 @@ class GreedyMiddlewareTest(PinDbTestCase):
     def test_read(self):
         response = self.client.post('/test_app/read/')
         self.assertFalse(middleware.PINNING_COOKIE in response.cookies)
-    
+
     @patch('pindb.middleware.time')
     def test_write(self, mock_time):
         mock_time.return_value = 1
