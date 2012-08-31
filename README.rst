@@ -3,7 +3,7 @@ pindb
 =====
 
 pindb helps you avoid race conditions endemic to database replication. It
-provides database replica pinning, round-robin (gone now?) read from replicas,
+provides database replica pinning, round-robin read from replicas,
 the use of unmanaged databases side by side with managed ones, and delegate
 routers for deciding among sets of replicated DBs.
 
@@ -52,10 +52,7 @@ advantage is that most of your code will just work. The disadvantage is
 that you will use the read replicas less than possible. You also might
 encounter more situations where the state of your DB changes behind your
 back: you might read from a lagged replica, then perform a write (which
-pins you to the master) based on that old information. Of course, this is
-always possible to some degree, replicas or not, unless you're running at
-the serializable isolation level, but bringing replication lag into the
-picture exacerbates it significantly.
+pins you to the master) based on that old information.
 
 If you need to manage more than 1 master/replica set, add
 ``PINDB_DELEGATE_ROUTERS`` for pindb to defer to on DB set selection.
@@ -185,11 +182,7 @@ and it should compose well with multiple settings files.
 Approach
 --------
 
-We use a threadlocal to hold the pinned set. This feels icky, but until we need
-an evented models, passing around the pinned set seems like a needless tax. It
-would be possible to pass the pinned set around instead if we needed to support
-an evented execution model. We might also take advantage of gevent's
-monkeypatching of threading.local to support eventlets.
+We use a threadlocal to hold the pinned set. This feels icky, but, passing around the pinned set seems like a needless tax.
 
 The database router will then respect pinned set.
 
@@ -209,7 +202,7 @@ for defining sets::
 
 And replica config can be finalized... ::
 
-    DATABASES = populate_replicas(MASTER_DATABASES, DATABASE_SETS)
+    DATABASES = DATABASES.update(populate_replicas(MASTER_DATABASES, DATABASE_SETS))
 
 ...resulting in something like... ::
 
@@ -230,7 +223,9 @@ interface as a normal ``DATABASE_ROUTER``, but ``db_for_read`` and
 ``db_for_write`` must return only master aliases. Then an appropriate master or
 replica will be chosen for that DB set.
 
-The DB router will throw an error if ``db_for_write`` is called without
+More concretely, suppose you have 2 different masters, and each of them has a read slave.  Your delegate router (as it existed before use of pindb) likely chooses which master based on app semantics.  Keep doing that.  Then pindb's router will select a read slave from the DB set whose master your existing (now delegate) router chose.
+
+The strict router will throw an error if ``db_for_write`` is called without
 declaring that it's OK. The correct approach is to pin the DB you intend to do
 writes to *before you read* from a replica.
 
@@ -244,7 +239,7 @@ To explictly prefer a read replica despite pinning, use either... ::
 If you would like to explicitly use a replica, ``pindb.get_replica()`` will
 return a replica alias.
 
-Pinning a set lasts the duration of a pinning context: once pinned, you cannot
+Pinning a set lasts the duration of a pinning context: once pinned, you should not
 unpin a DB. If you want to write to a DB without pinning the container, you can
 use queryset's ``.using`` method, which bypasses ``db_for_write``. Careful with
 this axe.
@@ -252,9 +247,6 @@ this axe.
 To declare a pin... ::
 
     pindb.pin('master-alias')
-
-For the common case of web requests and tasks, middleware and task signals,
-respectively, will handle the call to ``pindb.unpin_all()``.
 
 TODO: Use signed cookies if available (dj 1.4+) for web pinning context.
 
