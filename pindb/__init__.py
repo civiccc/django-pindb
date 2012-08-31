@@ -1,4 +1,4 @@
-__version__ = (0, 1, 8)  # remember to change setup.py
+__version__ = (0, 1, 9)  # remember to change setup.py
 
 import contextlib
 from functools import wraps
