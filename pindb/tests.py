@@ -1,16 +1,22 @@
 from __future__ import absolute_import
 
 from copy import deepcopy
-import os
-import tempfile
+import os, tempfile
+from threading import local
 
+from django import VERSION as dj_VERSION
 from django.http import HttpRequest, HttpResponse
 from django import db as dj_db
 from django.db.backends.dummy.base import DatabaseWrapper as DummyDatabaseWrapper
 from django.db.utils import ConnectionHandler, ConnectionRouter
 from django.conf import settings
 from django.core.management import call_command
-from django.test import TestCase
+# TransactionTestCase is used instead of TestCase
+#  because TestCase holds db changes in a pending transaction,
+#  which are not visible from the replica connection (even though)
+#  it is TEST_MIRROR'd.
+
+from django.test import TransactionTestCase 
 from django.test.simple import DjangoTestSuiteRunner
 from django.utils import importlib
 
@@ -46,7 +52,7 @@ Test task context:
     test writing after pinning
 """
 
-class InitTestCase(TestCase):
+class InitTestCase(TransactionTestCase):
     def setUp(self):
         super(InitTestCase, self).setUp()
         pindb.DB_SET_SIZES = {'wark':1}
@@ -58,7 +64,7 @@ class InitTestCase(TestCase):
 
 
 # TODO: add coverage, COVERAGE_MODULE_EXCLUDES
-class PinDbTestCase(TestCase):
+class PinDbTestCase(TransactionTestCase):
     multi_db = True
 
     def _pre_setup(self):
@@ -71,10 +77,15 @@ class PinDbTestCase(TestCase):
         #   lots of places do from foo import baz, so they have
         #   a local reference to an object we can't replace.
         # so reach in and (gulp) mash the object's state.
+        if dj_VERSION < (1, 4):
+            for conn in dj_db.connections._connections.values():
+                conn.close()
+            dj_db.connections._connections = {}
+        else:
+            for conn in dj_db.connections.all():
+                conn.close()
+            dj_db.connections._connections = local()
         dj_db.connections.databases = settings.DATABASES
-        for conn in dj_db.connections._connections.values():
-            conn.close()
-        dj_db.connections._connections = {}
 
         def make_router(import_path):
             module_path, class_name = import_path.rsplit('.', 1)
@@ -89,6 +100,7 @@ class PinDbTestCase(TestCase):
         dj_db.backend = dj_db.load_backend(dj_db.connection.settings_dict['ENGINE'])
 
         self.shim_runner = DjangoTestSuiteRunner()
+
         self.setup_databases()
 
         super(PinDbTestCase, self)._pre_setup()
@@ -143,7 +155,7 @@ misconfigured_settings = {
 }  # because MASTER_DATAABASES and DATABASE_SETS is required.
 
 @override_settings(**misconfigured_settings)
-class MisconfiguredTest(TestCase):
+class MisconfiguredTest(TransactionTestCase):
     multi_db = True  # Necessary? Tests pass without.
 
     def test_router_catches_misconfiguration(self):
