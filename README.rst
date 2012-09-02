@@ -2,10 +2,7 @@
 pindb
 =====
 
-pindb helps you avoid race conditions endemic to database replication. It
-provides database replica pinning, round-robin read from replicas,
-the use of unmanaged databases side by side with managed ones, and delegate
-routers for deciding among sets of replicated DBs.
+pindb is a master/slave router toolkit for Django.  It provides database replica pinning, round-robin read from replicas, the use of unmanaged databases side by side with managed ones, and delegate routers for deciding among sets of replicated DBs.
 
 TL;DR API
 =========
@@ -31,6 +28,16 @@ TL;DR API
     
     with master(alias):
        ... # write to master despite pinning state
+
+Jargon
+======
+
+Master refers to a writable DB.  Replica (or slave) refers to a read-only
+DB whose data comes from master writes.  One or more master/slave database sets can help scale reads and avoid lock contention on the master.  
+Typically all reads go to  replicas until a write occurs -- then all subsequent 
+reads also go to the master to avoid inconsistent reads due to replication lag.  
+Pinning is time-based and round-trips between web requests via cookies.  See 
+"design notes" below for more.
 
 Installation
 ============
@@ -88,13 +95,12 @@ Finalize ``DATABASES`` with ``pindb.populate_replicas``::
 Add ``pindb.middleware.PinDbMiddleware`` to your ``MIDDLEWARE_CLASSES``
 before any expected database access.
 
-Throughout your codebase, if you intend to write, declare it as early as
-possible to avoid inconsistent reads off the related replicas::
+Optionally, throughout your codebase, if you intend to write, declare it 
+as early as possible to avoid inconsistent reads off the related replicas::
 
     pin("default")
 
-That will cause all future reads to use the master and will allow writes to
-occur.
+That will cause all future reads to use the master.
 
 To use under celery, hook ``celery.signals.task_postrun`` to call
 ``pindb.unpin_all``::
@@ -182,7 +188,7 @@ and it should compose well with multiple settings files.
 Approach
 --------
 
-We use a threadlocal to hold the pinned set. This feels icky, but, passing around the pinned set seems like a needless tax.
+We use a threadlocal to hold the pinned set.
 
 The database router will then respect pinned set.
 
@@ -217,11 +223,12 @@ If no master is named "default", then the master of your first DB set will also
 be aliased to "default". You should use
 ``django.utils.datastructures.SortedDict`` to make that stable.
 
-In order to compose pinning with selection of the appropriate master, there is
-a one additional setting: ``DATABASE_ROUTER_DELEGATE``. It has the same
-interface as a normal ``DATABASE_ROUTER``, but ``db_for_read`` and
-``db_for_write`` must return only master aliases. Then an appropriate master or
-replica will be chosen for that DB set.
+If you have multiple database sets, you will also want to compose pinning with 
+selection of the appropriate set.  For this, there is one additional setting: 
+``DATABASE_ROUTER_DELEGATE``. It has the same interface as a normal 
+``DATABASE_ROUTER``, but ``db_for_read`` and ``db_for_write`` must return only 
+master aliases. Then an appropriate master or replica will be chosen for that DB 
+set.
 
 More concretely, suppose you have 2 different masters, and each of them has a read slave.  Your delegate router (as it existed before use of pindb) likely chooses which master based on app semantics.  Keep doing that.  Then pindb's router will select a read slave from the DB set whose master your existing (now delegate) router chose.
 
