@@ -16,3 +16,5 @@ INSTALLED_APPS = (
 MIDDLEWARE_CLASSES = (
     'pindb.middleware.PinDbMiddleware',
 )
+
+SECRET_KEY = "1e1909jd10d9joKMLAKXklmax"

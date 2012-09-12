@@ -273,6 +273,10 @@ class NoDelegateTest(PinDbTestCase):
                 dj_db.router.db_for_read(HamModel), "default-1"
             )
 
+        with self.assertRaises(ValueError):
+            with pindb.unpinned_replica("default"):
+                raise ValueError
+
     @patch("pindb.randint")
     def test_with_master(self, mock_randint):
         mock_randint.return_value = 0
