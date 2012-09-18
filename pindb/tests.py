@@ -124,6 +124,12 @@ class PinDbTestCase(TransactionTestCase):
     def teardown_databases(self, old_config, **kwargs):
         self.shim_runner.teardown_databases(self.old_config)
 
+    def _get_response_cookie(self, url):
+        response = self.client.post(url)
+        self.assertTrue(middleware.PINNING_COOKIE in response.cookies)
+        return sorted(
+                anyjson.loads(response.cookies[middleware.PINNING_COOKIE].value)
+        )
 
 def populate_databases(settings_dict):
     """Given a dict of various DB-related settings (DATABASES, MASTER_DATABASES, DATABASE_SETS), finalize all the settings into the DATABASES item of the dict.
@@ -307,6 +313,13 @@ class NoDelegateTest(PinDbTestCase):
             dj_db.router.db_for_read(HamModel), "default-0"
         )
 
+        @pindb.with_masters(["default"])
+        def to_master():
+            mock_randint.return_value = 2
+            self.assertEqual(
+                dj_db.router.db_for_read(HamModel), "default"
+            )
+
     @patch("pindb.randint")
     def test_get_replica(self, mock_randint):
         mock_randint.return_value = 0
@@ -475,6 +488,7 @@ class FullyConfiguredStrictTest(PinDbTestCase):
         self.assertTrue(dj_db.router.allow_relation(ham1, ham2))
         self.assertTrue(dj_db.router.allow_syncdb("default", HamModel))
         self.assertTrue(dj_db.router.allow_syncdb("default", EggModel))
+
         self.assertEqual(dj_db.router.db_for_read(FrobModel), "default")
 
 
@@ -581,13 +595,6 @@ class FullyConfiguredGreedyTest(PinDbTestCase):
 
 @override_settings(**greedy_middleware_settings)
 class GreedyMiddlewareTest(PinDbTestCase):
-    def _get_response_cookie(self, url):
-        response = self.client.post(url)
-        self.assertTrue(middleware.PINNING_COOKIE in response.cookies)
-        return sorted(
-                anyjson.loads(response.cookies[middleware.PINNING_COOKIE].value)
-        )
-
     def test_read(self):
         response = self.client.post('/test_app/read/')
         self.assertFalse(middleware.PINNING_COOKIE in response.cookies)
@@ -616,3 +623,57 @@ class GreedyMiddlewareTest(PinDbTestCase):
 
     def test_bad_cookie(self):
         self.assertEquals(middleware._get_request_pins('bad thing'), [])
+
+disabled_settings = {
+    'PINDB_ENABLED': False,
+    'DATABASE_ROUTERS': ['pindb.GreedyPinDbRouter'],
+    'MASTER_DATABASES': {
+        'default':  {
+            'NAME': ':memory:',
+            'ENGINE': 'django.db.backends.sqlite3',
+        },
+        'egg': {
+            'NAME': ':memory:',
+            'ENGINE': 'django.db.backends.sqlite3',
+        }
+    },
+    'DATABASE_SETS': {
+        # This normally would have overrides, but lots of sqlites in memory are
+        # happy together:
+        'default': [{}, {}],
+        'egg': [] #no replicas
+    },
+    'PINDB_DELEGATE_ROUTERS': ['test_project.router.HamAndEggRouter']
+}
+populate_databases(disabled_settings)
+
+@override_settings(**disabled_settings)
+class DisabledTest(PinDbTestCase):
+    def test_read(self):
+        response = self.client.post('/test_app/read/')
+        self.assertFalse(middleware.PINNING_COOKIE in response.cookies)
+    
+    def test_write(self):
+        response = self.client.post('/test_app/write/')
+        self.assertFalse(middleware.PINNING_COOKIE in response.cookies)
+
+    def test_router(self):
+        # Ham should go in the default DB:
+        self.assertEqual(dj_db.router.db_for_read(HamModel), "default")
+        # Reading one shouldn't cause it to pin:
+        self.assertEqual(pindb.is_pinned("default"), False)
+        # The delegate router has no opinion on Hams, so they should write to
+        # the default DB:
+        self.assertEqual(dj_db.router.db_for_write(HamModel), "default")
+        # The above should *not* cause it to pin since we're disabled.
+        self.assertEqual(pindb.is_pinned("default"), False)
+
+        # Eggs are stored in a replicated DB set, but since we're disabled, 
+        #   we should still get the master.
+        self.assertEqual(dj_db.router.db_for_read(EggModel), "egg")
+        # Reading shouldn't pin:
+        self.assertEqual(pindb.is_pinned("egg"), False)
+        # Writes should go to master:
+        self.assertEqual(dj_db.router.db_for_write(EggModel), "egg")
+        # but still should *not* cause it to pin since we're disabled.
+        self.assertEqual(pindb.is_pinned("egg"), False)

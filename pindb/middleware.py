@@ -7,7 +7,7 @@ from django.conf import settings
 
 import anyjson
 
-from . import pin, get_newly_pinned, unpin_all
+from . import pin, get_newly_pinned, unpin_all, is_enabled
 
 
 # The name of the cookie that directs a request's reads to the master DB
@@ -70,7 +70,8 @@ class PinDbMiddleware(object):
 
         request._pinned_until = {}
 
-        if not PINNING_COOKIE in request.COOKIES:
+        if ((not is_enabled()) or 
+                (not PINNING_COOKIE in request.COOKIES)):
             return
 
         for alias, until in _get_request_pins(request.COOKIES[PINNING_COOKIE]):
@@ -80,6 +81,9 @@ class PinDbMiddleware(object):
 
     def process_response(self, request, response):
         """Set outgoing cookie to persist preexisting and new pinnings."""
+        if not is_enabled():
+            return response
+
         pinned_until = _get_response_pins(request._pinned_until)
 
         to_persist = list(pinned_until.items())

@@ -23,6 +23,9 @@ __all__ = (
 
 _locals = local()
 
+def is_enabled():
+    return getattr(settings, 'PINDB_ENABLED', True)
+
 def unpin_all():
     """Clear the new and old pinnings and the chosen replicas."""
     # the authoritative set of pinned aliases:
@@ -257,6 +260,9 @@ class PinDbRouterBase(object):
         if master_alias is None:
             master_alias = "default"
 
+        if not is_enabled():
+            return master_alias
+
         # allow anything unmanaged by the DB set system to work unhindered.
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias
@@ -269,6 +275,10 @@ class PinDbRouterBase(object):
         master_alias = self.delegate.db_for_write(model, **hints)
         if master_alias is None:
             master_alias = "default"
+
+        if not is_enabled():
+            return master_alias
+
         # allow anything unmanaged by the DB set system to work unhindered.
         if not master_alias in settings.MASTER_DATABASES:
             return master_alias

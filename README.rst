@@ -46,6 +46,19 @@ Installation
 
     pip install pindb
 
+TL;DR: 
+ 
+ 1.) Set ``DATABASES_ROUTERS`` to use a pindb router
+ 1.) set ``PINDB_ENABLED`` to False under test
+ 1.) Define DB masters and replica sets.
+ 1.) populate ``DATABASES`` with ``pindb.populate_replicas``.
+ 1.) Add ``PinDbMiddleware`` to your middleware.
+ 1.) Integrate with celery (if needed).
+ 1.) profile for places to explicitly side-step pinning.
+
+
+More explicitly:
+
 Add ``pindb.StrictPinDbRouter`` or ``pindb.GreedyPinDbRouter`` to
 ``DATABASE_ROUTERS``.
 
@@ -60,6 +73,15 @@ that you will use the read replicas less than possible. You also might
 encounter more situations where the state of your DB changes behind your
 back: you might read from a lagged replica, then perform a write (which
 pins you to the master) based on that old information.
+
+``PINDB_ENABLED`` - This flag is useful for disabling pindb under 
+test.  Each TEST_MIRROR'd alias gets its own transaction, which 
+ is problematic under Django's `TestCase`_, where a master write will not be visible under the replica's connection.
+
+ pindb has an extensive test suite; disabling it under your own 
+ test suite is sane/recommended.
+
+.. _`TestCase`: https://docs.djangoproject.com/en/1.4/topics/testing/#testcase
 
 If you need to manage more than 1 master/replica set, add
 ``PINDB_DELEGATE_ROUTERS`` for pindb to defer to on DB set selection.
@@ -257,6 +279,14 @@ To declare a pin... ::
 
 TODO: Use signed cookies if available (dj 1.4+) for web pinning context.
 
+Coverage
+========
+
+To see coverage of ``pindb``:
+
+    $ PYTHONPATH=.:$PYTHONPATH coverage run setup.py test
+    $ coverage html
+
 Example configuration
 =====================
 
@@ -292,5 +322,6 @@ Example configuration
     
     DATABASES.update(pindb.populate_replicas(MASTER_DATABASES, DATABASE_SETS))
     
+    PINDB_ENABLED = True
     PINDB_DELEGATE_ROUTERS = ["myapp.router.Router"]
     DATABASE_ROUTERS = ['pindb.GreedyPinDbRouter']
