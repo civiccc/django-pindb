@@ -131,6 +131,24 @@ def _mash_aliases(aliases):
         aliases = set([aliases])
     return aliases
 
+def with_replicas(aliases):
+    """
+    @with_replicas([alias,...])
+    def func...
+
+    Read from replicas despite pinning state.
+    """
+    aliases = _mash_aliases(aliases)
+    # FIXME: test this.
+    def make_wrapper(func):
+        replicas = [unpinned_replica(alias) for alias in aliases]
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with contextlib.nested(*replicas):
+                return func(*args, **kwargs)
+        return wrapper
+    return make_wrapper
+
 class master(object):
     """Context manager for temporarily writing to a master DB
 
@@ -159,6 +177,24 @@ class master(object):
 
         if any((type, value, tb)):
             raise type, value, tb
+
+def with_masters(aliases):
+    """
+    @with_masters([alias,...])
+    def func...
+
+    Write to masters despite (and without affecting) pinning state.
+    """
+    aliases = _mash_aliases(aliases)
+    # FIXME: test this.
+    def make_wrapper(func):
+        masters = [master(alias) for alias in aliases]
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with contextlib.nested(*masters):
+                return func(*args, **kwargs)
+        return wrapper
+    return make_wrapper
 
 # TODO: add logging to aid debugging client code.
 def populate_replicas(masters, replicas_overrides, unmanaged_default=False):
