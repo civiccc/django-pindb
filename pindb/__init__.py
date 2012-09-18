@@ -1,6 +1,6 @@
 from __future__ import absolute_import
 
-__version__ = (0, 1, 10)  # remember to change setup.py
+__version__ = (0, 1, 11)  # remember to change setup.py
 
 import contextlib
 from functools import wraps
