@@ -48,14 +48,13 @@ Installation
 
 TL;DR: 
  
- 1.) Set ``DATABASES_ROUTERS`` to use a pindb router
- 1.) set ``PINDB_ENABLED`` to False under test
- 1.) Define DB masters and replica sets.
- 1.) populate ``DATABASES`` with ``pindb.populate_replicas``.
- 1.) Add ``PinDbMiddleware`` to your middleware.
- 1.) Integrate with celery (if needed).
- 1.) profile for places to explicitly side-step pinning.
-
+#. Set ``DATABASES_ROUTERS`` to use a pindb router
+#. set ``PINDB_ENABLED`` to False under test
+#. Define DB masters and replica sets.
+#. populate ``DATABASES`` with ``pindb.populate_replicas``.
+#. Add ``PinDbMiddleware`` to your middleware.
+#. Integrate with celery (if needed).
+#. profile for places to explicitly side-step pinning.
 
 More explicitly:
 
@@ -74,17 +73,21 @@ encounter more situations where the state of your DB changes behind your
 back: you might read from a lagged replica, then perform a write (which
 pins you to the master) based on that old information.
 
-``PINDB_ENABLED`` - This flag is useful for disabling pindb under 
-test.  Each TEST_MIRROR'd alias gets its own transaction, which 
- is problematic under Django's `TestCase`_, where a master write will not be visible under the replica's connection.
+``PINDB_ENABLED`` can be used to disable pindb under 
+test.  Each TEST_MIRROR'd alias gets its own connection (and hence transaction), 
+which is problematic under Django's `TestCase`_, where a master write will not 
+be visible under the replica's connection. 
 
- pindb has an extensive test suite; disabling it under your own 
- test suite is sane/recommended.
+pindb has an extensive test suite;
+disabling it under your own test suite is sane/recommended.
 
 .. _`TestCase`: https://docs.djangoproject.com/en/1.4/topics/testing/#testcase
 
 If you need to manage more than 1 master/replica set, add
-``PINDB_DELEGATE_ROUTERS`` for pindb to defer to on DB set selection.
+``PINDB_DELEGATE_ROUTERS`` for pindb to defer to on DB set selection. This is
+just another Django `database router`_ which should return a master alias; 
+pindb will then choose a master or replica as appropriate for the current pinning
+state of the returned master.
 
 Define ``MASTER_DATABASES``, same schema as ``DATABASES``::
 
