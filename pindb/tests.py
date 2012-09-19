@@ -55,13 +55,26 @@ Test task context:
 class InitTestCase(TransactionTestCase):
     def setUp(self):
         super(InitTestCase, self).setUp()
-        pindb.DB_SET_SIZES = {'wark':1}
+        pindb._locals.pinned_set = set()
+        pindb._locals.pinned_set.add('wark')
+        pindb._locals.inited = False
 
     def test_init_worked(self):
-        self.assertEqual({"wark":1}, pindb.DB_SET_SIZES)
+        self.assertEqual(set(['wark']), pindb._locals.pinned_set)
         pindb._init_state()
-        self.assertEqual({}, pindb.DB_SET_SIZES)
+        self.assertEqual(set(), pindb._locals.pinned_set)
 
+    def test_init_happens_only_once(self):
+        self.assertEqual(set(['wark']), pindb._locals.pinned_set)
+        pindb._init_state()
+        self.assertEqual(set(), pindb._locals.pinned_set)
+        pindb._locals.pinned_set.add('wargle')
+        pindb._init_state()
+        self.assertEqual(set(['wargle']), pindb._locals.pinned_set)
+        # except now we'll force inited back:
+        pindb._locals.inited = False
+        pindb._init_state()
+        self.assertEqual(set(), pindb._locals.pinned_set)
 
 # TODO: add coverage, COVERAGE_MODULE_EXCLUDES
 class PinDbTestCase(TransactionTestCase):

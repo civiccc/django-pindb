@@ -40,15 +40,13 @@ def unpin_all():
 # be a 2 here.
 DB_SET_SIZES = {}  # How many slaves each DB set has - 1
 def _init_state():
-    global DB_SET_SIZES
-    DB_SET_SIZES = {}
-
+    if getattr(_locals, 'inited', False):
+        return
     unpin_all()
-
-# initialize state
-_init_state()
+    _locals.inited = True
 
 def pin(alias, count_as_new=True):
+    _init_state()
     _locals.pinned_set.add(alias)
     if count_as_new:
         _locals.newly_pinned_set.add(alias)
@@ -57,20 +55,25 @@ def _unpin_one(alias, also_unpin_new=True):
     """
     Not intended for external use; just here for the decorators below.
     """
+    _init_state()
     _locals.pinned_set.remove(alias)
     if also_unpin_new:
         _locals.newly_pinned_set.discard(alias)
 
 def get_pinned():
+    _init_state()
     return _locals.pinned_set.copy()
 
 def get_newly_pinned():
+    _init_state()
     return _locals.newly_pinned_set.copy()
 
 def is_pinned(alias):
+    _init_state()
     return alias in _locals.pinned_set
 
 def is_newly_pinned(alias):
+    _init_state()
     return alias in _locals.newly_pinned_set
 
 REPLICA_TEMPLATE = "%s-%s"
@@ -84,6 +87,7 @@ def get_replica(master_alias):
     same one.
 
     """
+    _init_state()
     try:
         effective_size = DB_SET_SIZES[master_alias]
     except KeyError:
@@ -165,6 +169,7 @@ class master(object):
     # TODO: make this optionally take a list of models for which to pin appropriately.
     def __init__(self, alias):
         self.alias = alias
+        _init_state()
 
     def __enter__(self):
         self.was_pinned = is_pinned(self.alias)
