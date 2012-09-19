@@ -89,6 +89,8 @@ just another Django `database router`_ which should return a master alias;
 pindb will then choose a master or replica as appropriate for the current pinning
 state of the returned master.
 
+.. _`database router`: https://docs.djangoproject.com/en/1.4/topics/db/multi-db/#database-routers
+
 Define ``MASTER_DATABASES``, same schema as ``DATABASES``::
 
     DATABASES = {
