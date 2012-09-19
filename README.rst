@@ -327,6 +327,11 @@ Example configuration
     
     DATABASES.update(pindb.populate_replicas(MASTER_DATABASES, DATABASE_SETS))
     
-    PINDB_ENABLED = True
+
     PINDB_DELEGATE_ROUTERS = ["myapp.router.Router"]
     DATABASE_ROUTERS = ['pindb.GreedyPinDbRouter']
+
+    # default values which you can override:
+    PINDB_ENABLED = True
+    PINDB_PINNING_COOKIE = 'pindb_pinned_set'
+    PINDB_PINNING_SECONDS = 15
